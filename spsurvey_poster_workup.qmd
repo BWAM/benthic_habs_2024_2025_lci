@@ -345,7 +345,10 @@ taxa.sf<-toxins.sf |>
                                TRUE ~ present.y),
          present = case_when(PARAMETER_NAME %in% "microscopy_dominant_taxa" ~ present.y,
                              TRUE ~ present)) |> 
-  select(-c(present.x,present.y))
+  select(-c(present.x,present.y)) |> 
+  filter(SAMPLE_METHOD %in% c("scrape","floating_mat")) # we didnt do community analysis for the IDS
+
+
 
 tox_sp<-cat_analysis_function(df = taxa.sf, param = "microscopy_dominant_taxa")
 tox_sp_plot<-plot_cat_analysis(df = tox_sp, param = "microscopy_dominant_taxa")
