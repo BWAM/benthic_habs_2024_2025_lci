@@ -1,0 +1,357 @@
+---
+title: "benthic_hab_poster_draft"
+format: 
+  html: 
+    embed-resources: true
+    self-contained-math: true
+params:
+  user: kareynol
+editor: visual
+execute:
+  echo: false 
+---
+
+## spsurvey
+
+```{r start, message=FALSE,warning=FALSE}
+library(spsurvey)
+library(arrow)
+library(ggplot2)
+library(dplyr)
+
+#read in the weights
+file_p<-paste("C:/Users/",params$user,"/OneDrive - New York State Office of Information Technology Services/LMAS - LCI/2025.field.season.files/NY_design_sites_2024_2025_unequal.csv",sep = "")
+
+wgts<-read.csv(file_p) 
+#read in the lake ids
+
+#read in what was sampled
+plan_25<-readxl::read_excel(paste("C:/Users/",params$user,"/OneDrive - New York State Office of Information Technology Services/LMAS - LCI/2025.field.season.files/LCI.Field.Season.xlsx",sep = ""),sheet = "2.Sites")
+plan_25$notes <- "" #adding missing field
+
+plan_24<-readxl::read_excel(paste("C:/Users/",params$user,"/OneDrive - New York State Office of Information Technology Services/LMAS - LCI/2024.field.season.files/LCI.Field.Season.xlsx",sep = ""),sheet = "2.Sites")
+plan_24$"...31"<-""
+
+combo_plan<-rbind(plan_25,plan_24)
+
+combo_plan_short<-combo_plan |> 
+  select(TYPE,Project,rank,LOCATION_ID,Lake) |> 
+  mutate(siteID = rank)
+
+wgts_merge<-left_join(wgts,combo_plan_short,
+                  by = "siteID")
+
+wgts_merge2<-wgts_merge |> #create the EvalStatus field for if it was sampled - TS
+  mutate(EvalStatus = case_when(Lake %in% "0903LOW0155_Lows Lake" ~ "PB",
+                                !is.na(rank) ~ "TS", #physical barrier
+                                TRUE ~ "NN")) #not needed
+
+
+```
+
+## read in wqma
+```{r}
+# Directories
+obt_result_dir <- file.path(
+  "L:",
+  "DOW",
+  "BWAM Share",
+  "data",
+  "parquet",
+  "analytical_table_store",
+  "obt_result.parquet"
+)
+
+# All lake data
+lake_df <- open_dataset(obt_result_dir) |> 
+  filter(WATERBODY_TYPE %in% "lake",
+         PROJECT %in% "Lake Probability Sampling 2024-2025",
+         between(EVENT_DATETIME, # 2.2
+                 left = lubridate::ymd("2024-01-01"),
+                 right = lubridate::ymd("2025-12-31"))) |> 
+  select(SITE_CODE,
+         PROJECT,
+         EVENT_ID,
+         EVENT_DATETIME,
+         FRACTION,
+         PARAMETER_NAME,
+         RESULT_VALUE,
+         UNIT,
+         RESULT_QUALIFIER,
+         LATITUDE,
+         LONGITUDE) |> 
+  distinct() |> 
+  collect()
+
+lakes_l<-unique(lake_df$SITE_CODE)
+
+wgts_merge3<-wgts_merge2 |> 
+  mutate(EvalStatus = case_when(
+    Lake %in% "0903LOW0155_Lows Lake" ~ "PB",
+    LOCATION_ID %in% lakes_l ~ "TS",
+    TRUE ~ "NN"
+  ))
+
+```
+
+## reweigh the design
+```{r reweight_the_design}
+
+
+#create a use vector for if it was used or not
+used_site<-function(df){   
+  df<-df %>% 
+    mutate(use=case_when(EvalStatus %in% c("TS") ~TRUE, #this is a notation for "target sample"
+                         TRUE~FALSE))
+} #if it was dry note that and do not use the TS - ONLY use TS if we sampled it
+
+
+#create the true/false column needed to adjust the weights
+prob_1<-used_site(df = wgts_merge3) #this will be the dataframe from above with the EvalStatus notes - 
+
+#create function to adjust the weights
+adjust_weight<-function(df,caty_number){
+  n = caty_number 
+ 
+  # # or pre-allocate for slightly more efficiency
+  datalist = vector("list", length = n) # n of the categories
+  # 
+  framesize_x<-df %>% 
+    group_by(caty) |> #group by the category
+    dplyr::summarise(n=sum(wgt)) #this should be the sum of each category - this is a sum to the statewide frame - not by strata
+    for (i in framesize_x$caty){#for 26-27{
+    print(i)
+    df2<-df |> 
+      filter(caty %in% i)#for 26-27
+    
+    
+    wgt<-df2$wgt
+    wgtcat<-df2$caty
+    
+    sites<-df2$use
+    
+    framesize_y<-framesize_x |> 
+      filter(caty %in% i) #for 26-27
+
+    x1<-framesize_y$caty #for 26-27
+    
+    x2<-framesize_y$n
+    framesize<-setNames(x2,x1)
+    
+    x<-spsurvey::adjwgt(wgt,wgtcat,framesize,sites) 
+    
+    df_adj<-cbind(df2,x) 
+    df_adj<-df_adj |> select(wgt, final_weight = x,caty,caty,everything())
+    datalist[[i]] <- df_adj # add it to your list
+  }
+  
+  big_data = do.call(rbind, datalist)
+}
+
+prob_1_adjusted<-adjust_weight(prob_1,4) #for 4 lake size categories
+
+
+final_site_list<-prob_1_adjusted |> 
+  filter(EvalStatus %in% "TS") |> 
+  distinct()
+
+sites_wgts<-final_site_list |> 
+  select(LOCATION_ID,Lake,final_weight) |> 
+  distinct() |> 
+  rename(SITE_CODE = LOCATION_ID)
+
+```
+
+## Bring in the toxin data - as of 8/27 toxins are not in WQMA yet
+
+```{r}
+
+toxins_24 <- readRDS("L:/DOW/BWAM Share/data/data_warehouse_staging/2025/2024_2025_benthic_habs/2024_benthic_data.rds")
+toxins_25<-readRDS("L:/DOW/BWAM Share/data/data_warehouse_staging/2025/2024_2025_benthic_habs/2025_benthic_data.rds")
+
+toxins<-rbind(toxins_24,toxins_25)
+
+toxins<-toxins |> 
+  select(EVENT_DATETIME,SITE_CODE,SAMPLE_METHOD,PARAMETER_NAME,UNIT,
+         RESULT_VALUE,RESULT_QUALIFIER,RESULT_QUALIFIER_NOTE,
+         SAMPLE_LATITUDE,SAMPLE_LONGITUDE) |> 
+  distinct() 
+
+toxins2<-toxins |> 
+  left_join(sites_wgts) |> 
+  filter(!is.na(final_weight)) #take out ones that were not part of the design (maybe CSLAP?) all 82 of the plan match so that's good
+
+others<-toxins |> 
+  left_join(sites_wgts) |> 
+  filter(is.na(final_weight)) #there are extras - not sure where they are from
+
+
+```
+
+## Cat analysis - run spsurvey 
+
+```{r toxins-spsurvey}
+
+toxins_spsurvey<-toxins2 |> 
+  mutate(present = case_when(RESULT_VALUE > 0 ~ "present",
+                             TRUE ~ "non-detect" )) |> 
+  filter(!SAMPLE_METHOD %in% c("van_dorn","vinyl_tube","grab"))
+
+parameter_list<-unique(toxins_spsurvey$PARAMETER_NAME)
+
+# Complete the dataset
+df_completed <- toxins_spsurvey |> 
+  tidyr::complete(
+    SITE_CODE      = unique(toxins_spsurvey$SITE_CODE),
+    SAMPLE_METHOD    = c("integrated_disturbance_sample", "scrape", "floating_mat"),
+    PARAMETER_NAME = parameter_list,
+    fill      = list(RESULT_VALUE = as.numeric(NA)  # or "not sampled" if it's text
+  )) |> 
+  mutate(present = case_when(SAMPLE_METHOD %in% "floating_mat" & is.na(RESULT_VALUE)~"not_observed",
+                             TRUE ~ present)) |> 
+  select(-c(SAMPLE_LATITUDE,SAMPLE_LONGITUDE,final_weight))
+
+#get the lat/longs back
+locations<-toxins_spsurvey |> 
+  select(SITE_CODE,SAMPLE_LATITUDE,SAMPLE_LONGITUDE,final_weight) |> 
+  unique()
+
+df_completed2<-df_completed |> 
+  left_join(locations,
+            by = "SITE_CODE") |> 
+  mutate(SAMPLE_METHOD = case_when(
+    SAMPLE_METHOD %in% "integrated_disturbance_sample" ~ "IDS",
+    TRUE ~ SAMPLE_METHOD
+  ))
+
+
+#create sf object
+toxins.sf <- sf::st_as_sf(df_completed2,
+  coords = c("SAMPLE_LONGITUDE", "SAMPLE_LATITUDE"),
+  crs = "+proj=longlat +datum=WGS84 +no_defs"
+)
+
+toxins.l<-unique(toxins.sf$PARAMETER_NAME)
+
+#function to run category estimates and plot - so we dont have to type it all over and over again
+  
+cat_analysis_function<-function(df,param){
+  df<-df |> 
+    filter(PARAMETER_NAME %in% param)
+  
+  #run the spsurvey data
+standard_ests<-spsurvey::cat_analysis(
+  dframe = df,
+  vars = "present",
+  subpops = "SAMPLE_METHOD",
+  siteID = "SITE_CODE",
+  weight = "final_weight"
+)
+
+standard_ests<-standard_ests %>% 
+  filter(Category != "Total")
+}
+
+#function to plot them
+
+plot_cat_analysis<-function(df,param){
+
+plot<-ggplot2::ggplot(df, aes(fill=Category, y=Estimate.P, x = Subpopulation)) +
+  geom_bar(position='dodge', stat='identity') +
+  geom_crossbar(aes(x=Subpopulation, y=Estimate.P, ymin=LCB95Pct.P, ymax=UCB95Pct.P,group = Category),
+                colour="grey", alpha=0.5,
+                width = 0.9,
+                linewidth = 0.1,
+                fill = "grey",
+                position = position_dodge(0.9))+
+  geom_errorbar(aes(ymin= LCB95Pct.P,
+                    ymax= UCB95Pct.P),
+                width=.2,                    # Width of the error bars
+                position = position_dodge(width = 0.9),
+                alpha = 0.5)+
+  coord_flip()+ggtitle(label = paste(stringr::str_to_title(param),sep = " "))+
+  theme(legend.position = "none")+
+  scale_x_discrete(limits = rev)+
+  labs(y = "Estimated % of Lakes in NYS",
+       x = "Toxin Detection Categories")+
+  theme_minimal()
+plot
+}
+
+
+mc<-cat_analysis_function(df = toxins.sf, param = "microcystin")
+mc_plot<-plot_cat_analysis(df = mc, param = "microcystin")
+mc_plot
+
+nod<-cat_analysis_function(df = toxins.sf, param = "nodularin")
+nod_plot<-plot_cat_analysis(df = nod, param = "nodularin")
+nod_plot
+
+ana<-cat_analysis_function(df = toxins.sf, param = "anatoxin_a")
+ana_plot<-plot_cat_analysis(df = ana, param = "anatoxin_a")
+ana_plot
+
+cyl<-cat_analysis_function(df = toxins.sf, param = "cylindrospermopsin")
+cyl_plot<-plot_cat_analysis(df = cyl, param = "cylindrospermopsin")
+cyl_plot
+
+
+library(patchwork)
+
+mc_plot + ana_plot+ nod_plot +cyl_plot+plot_layout(nrow = 2,ncol = 2,axis_titles = "collect",guides = "collect",axes = "collect")
+
+
+```
+
+## species - cat analysis
+
+
+```{r}
+
+microscopy_24<-read.csv(paste("C:/Users/",params$user,"/OneDrive - New York State Office of Information Technology Services/Desktop/R_SMAS/LCI_benthic_habs_2025/data/microscopy_2024.csv",sep = ""))
+
+microscopy_25<-read.csv(paste("C:/Users/", params$user,"/OneDrive - New York State Office of Information Technology Services/Desktop/R_SMAS/LCI_benthic_habs_2025/data/microscopy_2025.csv",sep = ""))
+
+taxa<-plyr::rbind.fill(microscopy_24,microscopy_25)
+
+taxa2<-taxa |> 
+   filter(PARAMETER_NAME %in% "microscopy_dominant_taxa") 
+
+ taxa_sum<-taxa2 |> 
+   select(EVENT_DATETIME, SITE_CODE,PARAMETER_NAME,RESULT_VALUE, RESULT_CATEGORY, SAMPLE_METHOD)
+   
+taxa_sum2<-taxa_sum |> 
+  group_by(RESULT_CATEGORY) |> 
+  summarise(n=n())
+
+ taxa_sum_cat<-taxa_sum |> 
+   mutate(is_cyano = case_when(
+     RESULT_CATEGORY %in% c("anabaena", "microcystis", "planktothrix", "dolichospermum", "oscillatoria", 
+                            "aphanocapsa", "phormidium", "coelosphaerium","aphanazomenon", "lyngbya", "phormidium","synechoccocus","rivularia","fischerella","scytonema","merimoedia","tolypothrix","arthrospira","woronichinia","nostoc","spirulina", "dichothrix", sep = "|") ~ "yes",
+     .default = "no"
+   ))
+ 
+lakes_with_cyanos<-taxa_sum_cat |> 
+  filter(is_cyano %in% "yes") |> 
+  distinct(SITE_CODE,SAMPLE_METHOD,PARAMETER_NAME) |> 
+  mutate(present = "toxigenic_present")
+
+
+taxa.sf<-toxins.sf |> 
+  left_join(lakes_with_cyanos,
+            by = c("SITE_CODE","SAMPLE_METHOD","PARAMETER_NAME")) |> 
+  mutate(present = present.x,
+         present.y = case_when(is.na(present.y)~ "not_observed",
+                               TRUE ~ present.y),
+         present = case_when(PARAMETER_NAME %in% "microscopy_dominant_taxa" ~ present.y,
+                             TRUE ~ present)) |> 
+  select(-c(present.x,present.y))
+
+tox_sp<-cat_analysis_function(df = taxa.sf, param = "microscopy_dominant_taxa")
+tox_sp_plot<-plot_cat_analysis(df = tox_sp, param = "microscopy_dominant_taxa")
+tox_sp_plot + ggtitle ("Toxigenic Cyanobacteria observations")+xlab("Sample Method")
+
+
+
+```
+
