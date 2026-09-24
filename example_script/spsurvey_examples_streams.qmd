@@ -421,6 +421,8 @@ nox_plot
 
 ```
 
+## Relative Risk
+
 ```{r categories for spl}
 
 spl_categories<-spl |>

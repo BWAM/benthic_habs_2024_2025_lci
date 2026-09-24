@@ -13,11 +13,132 @@ execute:
 
 ## spsurvey
 
-```{r start, message=FALSE,warning=FALSE}
+## FUnctions
+
+```{r funtions,message = FALSE, warning = FALSE}
+
 library(spsurvey)
 library(arrow)
+library(palettes)
+library(scales)
 library(ggplot2)
 library(dplyr)
+
+#plotting function
+
+#define pallet 
+# Define your palette
+my_palette <- list(
+  primary = c("#154973","#233F2B","#FACE00")
+)
+
+my_palette2 <- list(
+  primary = c("#154973","#FACE00")
+)
+
+# Create a discrete scale function
+my_scale_colour <- function(...) {
+  ggplot2::discrete_scale(
+    domain = ggplot2::domain(),
+    range = my_palette$primary,
+    ...
+  )
+}
+
+plot_standard_ests<-function(df,title,ylab,xlab,col_pallete){
+  
+  df$Estimate.P_clean<-round(df$Estimate.P, digits = 2)
+  
+  plot<-ggplot2::ggplot(df, aes(x=factor(df$Subpopulation), y=df$Estimate.P,alpha = 0.5)) +
+  geom_bar(stat="identity",aes(fill=df$Subpopulation)) +
+  scale_colour_manual(values = col_pallete)+
+  geom_crossbar( aes(x=factor(df$Subpopulation), y=df$Estimate.P, ymin=df$LCB95Pct.P, ymax=df$UCB95Pct.P), colour="grey", alpha=0.5, size=0.5, fill = "grey")+
+  # ggpattern::geom_crossbar_pattern( aes(x=factor(chloride_ests$Category), y=chloride_ests$Estimate.P, ymin=chloride_ests$LCB95Pct.P, ymax=chloride_ests$UCB95Pct.P), size = 0.5)+
+  geom_errorbar(aes(ymin= df$LCB95Pct.P,
+                    ymax= df$UCB95Pct.P),
+                width=.2,                    # Width of the error bars
+                position="identity",
+                alpha = 0.5)+
+geom_text(aes(label = paste(Estimate.P_clean,"%",sep = "")), position = position_dodge(width = 1),vjust = -0.1)+
+  coord_flip()+ggtitle(label = title)+
+  theme(legend.position = "none")
+
+plot+facet_wrap(~Category) + ylab(ylab)+xlab(xlab)
+
+}
+
+#relative risk
+risk_spsurvey<-function(df,stressor,response){
+  risk_df<-df
+  
+  risk_df<-risk_df |> 
+    filter(stressor != "no_sample")
+  
+  #run the survey
+  relrisk_list<-spsurvey::relrisk_analysis(risk_df,
+  vars_response = response,
+  vars_stressor = stressor, 
+  siteID = "SITE_CODE",
+  weight = "final_weight",
+  xcoord = "LONGITUDE",
+  ycoord = "LATITUDE")
+  
+}
+
+#attributable risk
+#write a function to do this
+attrib_risk_spsurvey<-function(df,stressor,response){
+  risk_df<-df
+  
+  risk_df<-risk_df |> 
+    filter(response != "no_sample") |> 
+    filter(stressor != "no_sample")
+  
+  #run the survey
+  relrisk_list<-spsurvey::attrisk_analysis(risk_df,
+  vars_response = response,
+  vars_stressor = stressor, 
+  siteID = "SITE_CODE",
+  weight = "final_weight",
+  xcoord = "LONGITUDE",
+  ycoord = "LATITUDE")
+  
+}
+
+#function to plot them
+
+plot_cat_analysis<-function(df,param,col_pallete){
+ 
+  df$Estimate.P_clean<-round(df$Estimate.P, digits = 2)
+  
+plot<-ggplot2::ggplot(df, aes(fill=Category, y=Estimate.P, x = Subpopulation)) +
+  geom_bar(position='dodge', stat='identity',alpha = 0.6) +
+  scale_fill_palette_d(col_pallete)+
+  geom_crossbar(aes(x=Subpopulation, y=Estimate.P, ymin=LCB95Pct.P, ymax=UCB95Pct.P,group = Category),
+                colour="grey", alpha=0.5,
+                width = 0.9,
+                linewidth = 0.1,
+                fill = "grey",
+                position = position_dodge(0.9))+
+  geom_errorbar(aes(ymin= LCB95Pct.P,
+                    ymax= UCB95Pct.P),
+                width=.2,                    # Width of the error bars
+                position = position_dodge(width = 0.9),
+                alpha = 0.5)+
+geom_text(aes(label = paste(Estimate.P_clean,"%",sep = "")), position = position_dodge(width = 1),vjust = -0.1)+
+  coord_flip()+ggtitle(label = paste(stringr::str_to_title(param),sep = " "))+
+  theme(legend.position = "none")+
+  scale_x_discrete(limits = rev)+
+  labs(y = "Estimated % of Lakes in NYS",
+       x = "Sample Type")+
+  theme_minimal()
+plot
+}
+
+
+```
+
+```{r start, message=FALSE,warning=FALSE}
 
 #read in the weights
 file_p<-paste("C:/Users/",params$user,"/OneDrive - New York State Office of Information Technology Services/LMAS - LCI/2025.field.season.files/NY_design_sites_2024_2025_unequal.csv",sep = "")
@@ -50,7 +171,8 @@ wgts_merge2<-wgts_merge |> #create the EvalStatus field for if it was sampled - 
 ```
 
 ## read in wqma
-```{r}
+
+```{r, read-in-wqma,message = FALSE, warning = FALSE}
 # Directories
 obt_result_dir <- file.path(
   "L:",
@@ -94,8 +216,35 @@ wgts_merge3<-wgts_merge2 |>
 
 ```
 
+```{r read-in-phab}
+
+phab1<-read.csv(here::here("data/phab_2024_keleigh_benthics_site_level.csv"))
+phab2<-read.csv(here::here("data/phab_2025_keleigh_benthics_site_level.csv"))
+
+phab_all<-plyr::rbind.fill(phab1,phab2)
+
+#limit to just what we need
+phab_all<-phab_all |> 
+  group_by(WATERBODY_CODE) |> 
+  summarize(canopy_average = mean(as.numeric(CANOPY_DENSIOMETER_PERCENT),na.rm = TRUE)) |> 
+  mutate(SITE_CODE = paste(WATERBODY_CODE,"_DH",sep = ""))
+
+scale1<-read.csv(here::here("data/lake_scale_metrics_2024 1.csv"))
+scale2<-read.csv(here::here("data/lake_scale_metrics_2025 1.csv"))
+
+scale_all<-plyr::rbind.fill(scale1,scale2)
+
+scale_all<-scale_all |> 
+  mutate(SITE_CODE = paste(WATERBODY_CODE,"_DH",sep = ""))
+
+
+
+```
+
+
 ## reweigh the design
-```{r reweight_the_design}
+
+```{r reweight_the_design, message = FALSE, warning = FALSE}
 
 
 #create a use vector for if it was used or not
@@ -164,7 +313,7 @@ sites_wgts<-final_site_list |>
 
 ## Bring in the toxin data - as of 8/27 toxins are not in WQMA yet
 
-```{r}
+```{r bring-in-data,message = FALSE, warning = FALSE}
 
 toxins_24 <- readRDS("L:/DOW/BWAM Share/data/data_warehouse_staging/2025/2024_2025_benthic_habs/2024_benthic_data.rds")
 toxins_25<-readRDS("L:/DOW/BWAM Share/data/data_warehouse_staging/2025/2024_2025_benthic_habs/2025_benthic_data.rds")
@@ -188,18 +337,30 @@ others<-toxins |>
 
 ```
 
-## Cat analysis - run spsurvey 
+## Cat analysis - run spsurvey
 
-```{r toxins-spsurvey}
+```{r toxins-spsurvey,message = FALSE, warning = FALSE}
+
+parameter_list<-c("anatoxin_a",                                       "cylindrospermopsin",                                  
+"microcystin_la",                                      
+ "microcystin_lf",                                      
+ "microcystin_lr",                                      
+ "microcystin_ly" ,                                     
+ "microcystin_rr" ,                                     
+ "microcystin_yr" ,                                     
+ "nodularin",
+"microcystin")
+
 
 toxins_spsurvey<-toxins2 |> 
+  mutate(RESULT_VALUE = case_when(RESULT_QUALIFIER %in% "U"~ 0,
+                                  TRUE ~ RESULT_VALUE)) |> 
   mutate(present = case_when(RESULT_VALUE > 0 ~ "present",
                              TRUE ~ "non-detect" )) |> 
   filter(!SAMPLE_METHOD %in% c("van_dorn","vinyl_tube","grab"))
 
-parameter_list<-unique(toxins_spsurvey$PARAMETER_NAME)
 
-# Complete the dataset
+# Complete the dataset - so there is aline for each parameter and each method
 df_completed <- toxins_spsurvey |> 
   tidyr::complete(
     SITE_CODE      = unique(toxins_spsurvey$SITE_CODE),
@@ -252,61 +413,89 @@ standard_ests<-standard_ests %>%
   filter(Category != "Total")
 }
 
-#function to plot them
-
-plot_cat_analysis<-function(df,param){
-
-plot<-ggplot2::ggplot(df, aes(fill=Category, y=Estimate.P, x = Subpopulation)) +
-  geom_bar(position='dodge', stat='identity') +
-  geom_crossbar(aes(x=Subpopulation, y=Estimate.P, ymin=LCB95Pct.P, ymax=UCB95Pct.P,group = Category),
-                colour="grey", alpha=0.5,
-                width = 0.9,
-                linewidth = 0.1,
-                fill = "grey",
-                position = position_dodge(0.9))+
-  geom_errorbar(aes(ymin= LCB95Pct.P,
-                    ymax= UCB95Pct.P),
-                width=.2,                    # Width of the error bars
-                position = position_dodge(width = 0.9),
-                alpha = 0.5)+
-  coord_flip()+ggtitle(label = paste(stringr::str_to_title(param),sep = " "))+
-  theme(legend.position = "none")+
-  scale_x_discrete(limits = rev)+
-  labs(y = "Estimated % of Lakes in NYS",
-       x = "Toxin Detection Categories")+
-  theme_minimal()
-plot
-}
-
-
 mc<-cat_analysis_function(df = toxins.sf, param = "microcystin")
-mc_plot<-plot_cat_analysis(df = mc, param = "microcystin")
+mc_plot<-plot_cat_analysis(df = mc, param = "microcystin", col_pallete = my_palette$primary)
 mc_plot
 
 nod<-cat_analysis_function(df = toxins.sf, param = "nodularin")
-nod_plot<-plot_cat_analysis(df = nod, param = "nodularin")
+nod_plot<-plot_cat_analysis(df = nod, param = "nodularin", col_pallete = my_palette$primary)
 nod_plot
 
 ana<-cat_analysis_function(df = toxins.sf, param = "anatoxin_a")
-ana_plot<-plot_cat_analysis(df = ana, param = "anatoxin_a")
+ana_plot<-plot_cat_analysis(df = ana, param = "anatoxin_a", col_pallete = my_palette$primary)
 ana_plot
 
 cyl<-cat_analysis_function(df = toxins.sf, param = "cylindrospermopsin")
-cyl_plot<-plot_cat_analysis(df = cyl, param = "cylindrospermopsin")
+cyl_plot<-plot_cat_analysis(df = cyl, param = "cylindrospermopsin", col_pallete = my_palette$primary)
 cyl_plot
 
 
 library(patchwork)
 
-mc_plot + ana_plot+ nod_plot +cyl_plot+plot_layout(nrow = 2,ncol = 2,axis_titles = "collect",guides = "collect",axes = "collect")
+mc_plot + ana_plot+ nod_plot +plot_layout(nrow = 1,ncol = 3,axis_titles = "collect",guides = "collect",axes = "collect")
 
 
 ```
+## Just toxins present overall and then by method (not by toxin species)
+
+```{r toxins-all,message=FALSE,warning=FALSE}
+
+lakes_with_any_toxin<-toxins.sf |> 
+  filter(PARAMETER_NAME %in% parameter_list) |> #limit to just the toxin data
+  select(SITE_CODE,present,final_weight,geometry) |> 
+  mutate(level = case_when(present %in% "present"~ 3,
+                           present %in% "non-detect"~ 2,
+                           TRUE ~ 1)) |> 
+  filter(present != "not_observed") |> #since we dont care about the method
+  group_by(SITE_CODE) |> 
+  filter(level == max(level)) |> 
+  distinct()
+
+  #run the spsurvey data for just overall
+standard_ests_overall<-spsurvey::cat_analysis(
+  dframe = lakes_with_any_toxin,
+  vars = "present",
+  #subpops = "SAMPLE_METHOD",
+  siteID = "SITE_CODE",
+  weight = "final_weight"
+)
+standard_ests_overall<-standard_ests_overall %>% 
+  filter(Category != "Total")
+
+lakes_with_any_toxin_method<-toxins.sf |> 
+    filter(PARAMETER_NAME %in% parameter_list) |>
+  select(SITE_CODE,SAMPLE_METHOD,present,final_weight,geometry) |> 
+    mutate(level = case_when(present %in% "present"~ 3,
+                           present %in% "non-detect"~ 2,
+                           TRUE ~ 1)) |> 
+  group_by(SITE_CODE, SAMPLE_METHOD) |> 
+  filter(level == max(level)) |> 
+  distinct()
+
+lake_plot<-plot_cat_analysis(df = standard_ests_overall, param = "Estimates of Toxin Presence in NYS by Lake (%)", col_pallete = my_palette2$primary)
+lake_plot
+
+
+  #run the spsurvey data for just overall
+standard_ests_overall_by_method<-spsurvey::cat_analysis(
+  dframe = lakes_with_any_toxin_method,
+  vars = "present",
+  subpops = "SAMPLE_METHOD",
+  siteID = "SITE_CODE",
+  weight = "final_weight"
+)
+standard_ests_overall_by_method<-standard_ests_overall_by_method %>% 
+  filter(Category != "Total")
+
+lake_plot2<-plot_cat_analysis(df = standard_ests_overall_by_method, param = "Estimates of Toxin Presence by Sample Method", col_pallete = my_palette$primary)
+lake_plot2
+
+```
+
 
 ## species - cat analysis
 
-
-```{r}
+```{r, message = FALSE, warning = FALSE}
 
 microscopy_24<-read.csv(paste("C:/Users/",params$user,"/OneDrive - New York State Office of Information Technology Services/Desktop/R_SMAS/LCI_benthic_habs_2025/data/microscopy_2024.csv",sep = ""))
 
@@ -351,10 +540,503 @@ taxa.sf<-toxins.sf |>
 
 
 tox_sp<-cat_analysis_function(df = taxa.sf, param = "microscopy_dominant_taxa")
-tox_sp_plot<-plot_cat_analysis(df = tox_sp, param = "microscopy_dominant_taxa")
+tox_sp_plot<-plot_cat_analysis(df = tox_sp, param = "microscopy_dominant_taxa",col_pallete = my_palette2$primary)
 tox_sp_plot + ggtitle ("Toxigenic Cyanobacteria observations")+xlab("Sample Method")
+
+
+taxa_sum<-taxa_sum_cat|> 
+  mutate(total = 1) |> 
+  group_by(SAMPLE_METHOD,RESULT_CATEGORY,is_cyano) |> 
+  summarise(n = n())
+```
+
+## Extent - Impacted Categories
+
+```{r message = FALSE, warning = FALSE}
+
+spl_categories<-lake_df |>
+  mutate(WATERBODY_CODE = paste(SITE_CODE,"_DH",sep = "")) |> 
+  filter(PARAMETER_NAME %in% c(
+                               "iron",
+                               "nitrogen",
+                               "ph",
+                               "phosphorus",
+                               "secchi_disk_depth",
+                               "sulfate",
+                               "chlorophyll-a"
+                               )) |> 
+  mutate(parameter_full = paste(PARAMETER_NAME,UNIT,sep = "_")) |>
+  filter(parameter_full != "chlorophyll-a_RFU") |> 
+  select(-c(PROJECT,PARAMETER_NAME,UNIT, FRACTION,EVENT_ID,RESULT_QUALIFIER)) |> 
+  tidyr::pivot_wider(names_from = parameter_full,
+                     values_from = RESULT_VALUE,
+                     values_fn = function(x) median(x,na.rm = TRUE)) |> 
+  dplyr::mutate(phos_cat = case_when(
+    `phosphorus_mg/L` > 0.020 ~ "impacted",
+    is.na(`phosphorus_mg/L`)~ "no_sample",
+    TRUE~ "non-impacted")) |> 
+  mutate(iron_cat = case_when(
+    `iron_ug/L` > 2000 ~ "impacted",
+    is.na(`iron_ug/L`)~ "no_sample",
+    TRUE ~ "non-impacted")) |> 
+  mutate(nitrogen_cat = case_when(
+    `nitrogen_ug/L` >= 600 ~"impacted",
+    `nitrogen_ug/L` < 600 ~ "non-impacted",
+    TRUE ~ "no_sample")) |> 
+      mutate(ph_cat = case_when(
+        (`ph_pH units` > 8.5 | `ph_pH units` < 6.5) ~ "impacted",
+        (`ph_pH units`>= 6.6 & `ph_pH units` < 8.5) ~ "non-impacted",
+        TRUE ~ "no_sample")) |> 
+   mutate(secchi_cat = case_when(
+        (`secchi_disk_depth_meters` > 2) ~ "non-impacted",
+        (`secchi_disk_depth_meters` <= 2) ~ "impacted",
+        TRUE ~ "no_sample")) |>
+       mutate(sulf_cat = case_when(
+        (`sulfate_ug/L` > 300) ~ "impacted",
+        (`sulfate_ug/L` <= 300) ~ "non-impacted",
+        TRUE ~ "no_sample")) |> 
+mutate(np_ratio = ((`nitrogen_ug/L`/1000)/14.007)/((`phosphorus_mg/L`)/30.974)) |> #convert to mg/L and then get moles of N / moles P
+  mutate(np_cat = case_when(
+    np_ratio <=15 ~ "impacted",
+    np_ratio >15 ~"non-impacted",
+    TRUE~ "no_sample"
+  )) |> 
+    mutate(chla_cat = case_when(
+    `chlorophyll-a_ug/L` >8 ~ "impacted",
+    `chlorophyll-a_ug/L` <=8 ~"non-impacted",
+    TRUE~ "no_sample"
+  ))
+
+#merge with phab and scale metrics
+
+spl_categories<-spl_categories |> 
+  left_join(phab_all,by = "SITE_CODE") |> 
+  left_join(scale_all,by = "SITE_CODE") |> #create the groups for canopy cover
+  mutate(canopy_cat = case_when(
+    canopy_average <= 25 ~ "impacted",
+    canopy_average > 25 ~ "non-impacted",
+    TRUE ~ "no_sample"))
+#merge with the toxins
+#need to get the toxins in here - maybe per lake AND per sample type? not sure yet
+# could have a column for each type of sample and the present/absent
+
+toxins_short<-toxins.sf |> 
+  select(SITE_CODE,EVENT_DATETIME,SAMPLE_METHOD,
+         present) |> 
+  filter(present %in% "present") |> 
+  distinct() #why are there repeats? figure out why there are some with method populated twice - its because there are multiple toxins!
+
+spl_categories<-spl_categories |> 
+  mutate(toxins_present = case_when(
+    SITE_CODE %in% toxins_short$SITE_CODE ~ "present",
+    TRUE ~ "non-detect"
+  ))
+
+#get the weights back in
+spl_categories<-spl_categories |> 
+  left_join(sites_wgts, by = "SITE_CODE")
+
+spl_categories<-spl_categories |> 
+  filter(final_weight > 0)
+
+
+#create sf object
+spl_categories <- sf::st_as_sf(spl_categories,
+  coords = c("LONGITUDE", "LATITUDE"),
+  crs = "+proj=longlat +datum=WGS84 +no_defs"
+)
+
+
+```
+
+## Run them
+
+```{r run-extent, message = FALSE, warning = FALSE}
+standard_ests_phos<-spsurvey::cat_analysis(
+  dframe = spl_categories,
+  vars = "phos_cat",
+  siteID = "SITE_CODE",
+  weight = "final_weight"
+)
+
+plot_standard_ests(standard_ests_phos,"Phosphorus",ylab = "Result Value",xlab = "Stream Categories",col_pallete = my_palette$primary)
+
+standard_ests_iron<-spsurvey::cat_analysis(
+  dframe = spl_categories,
+  vars = "iron_cat",
+  siteID = "SITE_CODE",
+  weight = "final_weight"
+)
+
+standard_ests_nitrogen<-spsurvey::cat_analysis(
+  dframe = spl_categories,
+  vars = "nitrogen_cat",
+  siteID = "SITE_CODE",
+  weight = "final_weight"
+)
+
+standard_ests_ph<-spsurvey::cat_analysis(
+  dframe = spl_categories,
+  vars = "ph_cat",
+  siteID = "SITE_CODE",
+  weight = "final_weight"
+)
+
+standard_ests_secchi<-spsurvey::cat_analysis(
+  dframe = spl_categories,
+  vars = "secchi_cat",
+  siteID = "SITE_CODE",
+  weight = "final_weight"
+)
+
+standard_ests_canopy<-spsurvey::cat_analysis(
+  dframe = spl_categories,
+  vars = "canopy_cat",
+  siteID = "SITE_CODE",
+  weight = "final_weight"
+)
+
+standard_ests_chla<-spsurvey::cat_analysis(
+  dframe = spl_categories,
+  vars = "chla_cat",
+  siteID = "SITE_CODE",
+  weight = "final_weight"
+)
+
+standard_ests_sulfate<-spsurvey::cat_analysis(
+  dframe = spl_categories,
+  vars = "sulf_cat",
+  siteID = "SITE_CODE",
+  weight = "final_weight"
+)
+
+standard_ests_np<-spsurvey::cat_analysis(
+  dframe = spl_categories,
+  vars = "np_cat",
+  siteID = "SITE_CODE",
+  weight = "final_weight"
+)
+
 
 
 
 ```
 
+```{r bind-together}
+
+#merge them together
+
+standard_ests_spl_all<-rbind(
+                             standard_ests_nitrogen,
+                             standard_ests_ph,
+                             standard_ests_phos,
+                             standard_ests_iron,
+                             standard_ests_secchi,
+                             standard_ests_canopy,
+                             standard_ests_chla,
+                             #standard_ests_sulfate,
+                             standard_ests_np)
+
+standard_ests_spl_all<-standard_ests_spl_all |> 
+  filter(Category %in% c("impacted","non-impacted")) |> 
+  mutate(Category = case_when(Category %in% 'non-impacted'~ 'Non-Impacted',
+                              Category %in% 'impacted'~'Impacted',
+                              TRUE ~ Category)) |> 
+  mutate(Indicator = factor(Indicator, levels = c("phos_cat",
+                                                  "nitrogen_cat",
+                                                  "np_cat",
+                                                  "chla_cat",
+                                                  "sulf_cat",
+                                                  "iron_cat",
+                                                  "ph_cat",
+                                                  "secchi_cat",
+                                                  "canopy_cat"))) |> 
+  group_by(Indicator,Category) |> 
+  mutate(Estimate.P_clean = round(Estimate.P, digits = 0))
+
+#make them prettier
+standard_ests_spl_all$Indicator<-dplyr::recode(standard_ests_spl_all$Indicator,
+                                               "phos_cat" = "Total Phosphate",
+                                               "nitrogen_cat" = "Total Nitrogen",
+                                               "ph_cat" = "pH",
+                                               "chla_cat" = "Chlorophyl A",
+                                               "sulf_cat" = "Sulfate",
+                                               "iron_cat"= "Iron",
+                                               "secchi_cat" = "Secchi",
+                                               "canopy_cat" = "Canopy",
+                                               "np_cat" = "NP Ratio")
+
+plot_extent<-ggplot2::ggplot(standard_ests_spl_all, aes(x=standard_ests_spl_all$Indicator, y=standard_ests_spl_all$Estimate.P)) +
+  #geom_bar(stat="identity",aes(fill=standard_ests_spl_all$Indicator)) +
+  geom_bar(stat="identity",fill ="#233F2B") +
+  geom_crossbar( aes(x=factor(standard_ests_spl_all$Indicator), y=standard_ests_spl_all$Estimate.P, ymin=standard_ests_spl_all$LCB95Pct.P, ymax=standard_ests_spl_all$UCB95Pct.P), colour="grey", alpha=0.5, size=0.5, fill = "grey")+
+  geom_errorbar(aes(ymin= standard_ests_spl_all$LCB95Pct.P,
+                    ymax= standard_ests_spl_all$UCB95Pct.P),
+                width=.2,                    # Width of the error bars
+                position="identity",
+                alpha = 0.5)+
+  geom_text(aes(label = paste(Estimate.P_clean,"%",sep = ""), vjust = -0.1))+
+  coord_flip()+ggtitle(label = "Extent")+
+  theme(legend.position = "none")+
+  labs(y = "Estimated % of Lakes in NYS",
+       x = " Indicator Categories")+
+  theme_minimal()
+plot_extent + facet_wrap(~Category)
+
+
+```
+
+```{r plot-jut-impacted}
+
+standard_ests_spl_all_short<-standard_ests_spl_all |> 
+  filter(Category %in% "Impacted")
+
+plot_extent_impaired<-ggplot2::ggplot(standard_ests_spl_all_short, aes(x=Indicator, y=Estimate.P)) +
+  #geom_bar(stat="identity",aes(fill=standard_ests_spl_all$Indicator)) +
+  geom_bar(stat="identity",fill ="#233F2B") +
+  geom_crossbar( aes(x=Indicator, y=Estimate.P, 
+                     ymin=LCB95Pct.P, 
+                     ymax=UCB95Pct.P), colour="grey", alpha=0.5, size=0.5, fill = "grey")+
+  geom_errorbar(aes(ymin= LCB95Pct.P,
+                    ymax= UCB95Pct.P),
+                width=.2,                    # Width of the error bars
+                position="identity",
+                alpha = 0.5)+
+  geom_text(aes(label = paste(Estimate.P_clean,"%",sep = ""), vjust = -0.1))+
+  coord_flip()+ggtitle(label = "Extent")+
+  theme(legend.position = "none")+
+  labs(y = "Estimated % of Lakes in NYS",
+       x = " Indicator Categories")+
+  theme_minimal()
+plot_extent_impaired
+
+
+```
+
+## RElative Risk
+
+RR \> 1: The stressor increases the likelihood of poor condition.
+
+RR = 1: No association.
+
+RR \< 1: The stressor is associated with better condition.
+
+```{r relative-risk-start}
+#use the same as above but it needs to say poor or good
+spl_categories2<-spl_categories |> 
+    mutate(across(
+    .cols = c("phos_cat",
+              "iron_cat",
+              "nitrogen_cat",
+              "ph_cat",
+              "secchi_cat",
+              "canopy_cat",
+              "sulf_cat",
+              "np_cat",
+              "chla_cat"
+              ),  # columns to modify
+    .fns = ~ ifelse(. == "impacted", "Poor", .)  # replacement logic
+  )) |> 
+    mutate(across(
+    .cols = c("phos_cat",
+              "iron_cat",
+              "nitrogen_cat",
+              "ph_cat",
+              "secchi_cat",
+              "canopy_cat",
+              "sulf_cat",
+              "np_cat",
+              "chla_cat"),  # columns to modify
+    .fns = ~ ifelse(. == "non-impacted", "Good", .)  # replacement logic
+  )) |> 
+  mutate(toxins_present = case_when(
+    toxins_present %in% "present" ~ "Poor",
+    toxins_present %in% "non-detect" ~ "Good",
+    TRUE ~ "no_sample"
+  ))
+
+#run them! with the function above
+
+phos_risk<-risk_spsurvey(df = spl_categories2, 
+                        response = "toxins_present",
+                        stressor = "phos_cat")
+iron_risk<-risk_spsurvey(df = spl_categories2, 
+                        response = "toxins_present",
+                        stressor = "iron_cat")
+ph_risk<-risk_spsurvey(df = spl_categories2, 
+                       response = "toxins_present",
+                        stressor = "ph_cat")
+secchi_risk<-risk_spsurvey(df = spl_categories2, 
+                        response = "toxins_present",
+                        stressor = "secchi_cat")
+canopy_risk<-risk_spsurvey(df = spl_categories2, 
+                        response = "toxins_present",
+                        stressor = "canopy_cat")
+nitrogen_risk<-risk_spsurvey(df = spl_categories2,
+                        response = "toxins_present",
+                        stressor = "nitrogen_cat")
+chla_risk<-risk_spsurvey(df = spl_categories2,
+                        response = "toxins_present",
+                        stressor = "chla_cat")
+# np_risk<-risk_spsurvey(df = spl_categories2,
+#                         response = "toxins_present",
+#                         stressor = "np_cat") #cant do this one either bc they're all good
+# np_risk<-risk_spsurvey(df = spl_categories2,
+#                         response = "toxins_present",
+#                         stressor = "np_cat")
+# 
+# sulf_risk<-risk_spsurvey(df = spl_categories2,
+#                         response = "toxins_present",
+#                         stressor = "sulf_cat") #cant do this one bc we dont have any in the "good" category
+#doesnt have all of the categories
+
+risk_all <- rbind(phos_risk,
+                  iron_risk,
+                  ph_risk,
+                  secchi_risk,
+                  canopy_risk,
+                  chla_risk,
+                  nitrogen_risk)
+
+risk_all<-risk_all |> 
+    mutate(Stressor = factor(Stressor, levels = c("phos_cat",
+                                                  "nitrogen_cat",
+                                                  "np_cat",
+                                                  "chla_cat",
+                                                  "sulf_cat",
+                                                  "iron_cat",
+                                                  "ph_cat",
+                                                  "secchi_cat",
+                                                  "canopy_cat"))) |> 
+    group_by(Stressor) |> 
+  mutate(Estimate_clean = round(Estimate, digits = 2))
+
+risk_all$Stressor<-dplyr::recode(risk_all$Stressor,
+                                                "phos_cat" = "Total Phosphate",
+                                               "nitrogen_cat" = "Total Nitrogen",
+                                               "ph_cat" = "pH",
+                                               "chla_cat" = "Chlorophyl A",
+                                               "sulf_cat" = "Sulfate",
+                                               "iron_cat"= "Iron",
+                                               "secchi_cat" = "Secchi",
+                                               "canopy_cat" = "Canopy",
+                                               "np_cat" = "NP Ratio")
+#plot them!!
+
+plot_risk<-risk_all |> 
+  ggplot2::ggplot(aes(x=Stressor,
+                                         y=Estimate)) +
+  geom_point(stat="identity",fill ="#233F2B") +
+  geom_crossbar( aes(x=Stressor, y=Estimate, ymin=LCB95Pct, ymax=UCB95Pct), colour="grey", alpha=0.1, size=0.5, fill = "grey")+
+  geom_errorbar(aes(ymin= LCB95Pct,
+                    ymax= UCB95Pct),
+                width=.2,                    # Width of the error bars
+                position="identity",
+                alpha = 0.09)+
+  geom_text(aes(label = Estimate_clean, vjust = -0.1))+
+  coord_flip()+ggtitle(label = "Relative Risk")+
+  theme(legend.position = "none")+
+  labs(y = "Relative Risk Factor",
+       x = "")+
+  geom_hline(yintercept = 1, color = "#FACE00", width = 0.1)+
+  theme_minimal()
+plot_risk
+
+```
+
+## Attributable Risk
+
+Attributable risk values close to zero indicate that removing the stressor variable will have little or no impact on the probability that the response variable is in poor condition. Attributable risk values close to one indicate that removing the stressor variable will result in extensive reduction of the probability that the response variable is in poor condition. https://search.r-project.org/CRAN/refmans/spsurvey/html/attrisk_analysis.html
+
+```{r}
+
+phos_attrib_risk<-attrib_risk_spsurvey(df = spl_categories2,
+                        response = "toxins_present",
+                        stressor = "phos_cat")
+
+iron_attrib_risk<-attrib_risk_spsurvey(df = spl_categories2,
+                        response = "toxins_present",
+                        stressor = "iron_cat")
+nitrogen_attrib_risk<-attrib_risk_spsurvey(df = spl_categories2,
+                        response = "toxins_present",
+                        stressor = "nitrogen_cat")
+ph_attrib_risk<-attrib_risk_spsurvey(df = spl_categories2,
+                        response = "toxins_present",
+                        stressor = "ph_cat")
+secchi_attrib_risk<-attrib_risk_spsurvey(df = spl_categories2,
+                        response = "toxins_present",
+                        stressor = "secchi_cat")
+canopy_attrib_risk<-attrib_risk_spsurvey(df = spl_categories2,
+                        response = "toxins_present",
+                        stressor = "canopy_cat")
+chla_attrib_risk<-attrib_risk_spsurvey(df = spl_categories2,
+                        response = "toxins_present",
+                        stressor = "chla_cat")
+
+
+attrib_risk_all<-rbind(
+  phos_attrib_risk,
+  nitrogen_attrib_risk, #epty bc we dont have any in the poor category
+  ph_attrib_risk,
+  secchi_attrib_risk,
+  canopy_attrib_risk,
+  iron_attrib_risk,
+  chla_attrib_risk)
+
+
+attrib_risk_all<-attrib_risk_all |> 
+    mutate(Stressor = factor(Stressor, levels = c("phos_cat",
+                                                  "nitrogen_cat",
+                                                  "np_cat",
+                                                  "chla_cat",
+                                                  "sulf_cat",
+                                                  "iron_cat",
+                                                  "ph_cat",
+                                                  "secchi_cat",
+                                                  "canopy_cat"))) |> 
+    group_by(Stressor) |> 
+  mutate(Estimate_clean = round(Estimate*100, digits = 1))
+
+attrib_risk_all$Stressor<-dplyr::recode(attrib_risk_all$Stressor,
+                                              "phos_cat" = "Total Phosphate",
+                                               "nitrogen_cat" = "Total Nitrogen",
+                                               "ph_cat" = "pH",
+                                               "chla_cat" = "Chlorophyl A",
+                                               "sulf_cat" = "Sulfate",
+                                               "iron_cat"= "Iron",
+                                               "secchi_cat" = "Secchi",
+                                               "canopy_cat" = "Canopy",
+                                               "np_cat" = "NP Ratio")
+
+plot_attrib_risk<-attrib_risk_all |> 
+  ggplot2::ggplot(aes(x=Stressor,y=Estimate*100)) +
+  geom_bar(stat="identity",fill ="#233F2B") +
+  geom_crossbar( aes(x=Stressor, y=Estimate *100, ymin=LCB95Pct*100, ymax=UCB95Pct*100), colour="grey", alpha=0.5, size=0.5, fill = "grey")+
+  geom_errorbar(aes(ymin= LCB95Pct,
+                    ymax= UCB95Pct),
+                width=.2,                    # Width of the error bars
+                position="identity",
+                alpha = 0.5)+
+  geom_text(aes(label = paste(Estimate_clean,"%",sep = ""), vjust = -0.1))+
+  coord_flip()+ggtitle(label = "Attributable Risk")+
+  theme(legend.position = "none")+
+  labs(y = "Attributable Risk",
+       x = "")+
+  theme_minimal()
+plot_attrib_risk
+
+
+```
+
+RR tells you the strength of the association.
+
+AR tells you the magnitude of impact in terms of cases that could be prevented if the stressor were removed. In spsurvey’s risk analysis vignettes, RR is plotted to show the association, and AR is calculated to show the potential improvement in biological condition if the stressor is reduced
+
+[![](RR_AR_Fig.png)](https://www.epa.gov/national-aquatic-resource-surveys/relative-extent-relative-risk-and-attributable-risk)
+
+```{r}
+library(patchwork)
+
+plot_extent_impaired +plot_risk + plot_attrib_risk +plot_layout(nrow = 1,ncol = 3,axis_titles = "collect",guides = "collect",axes = "collect")
+
+```
