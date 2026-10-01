@@ -24,6 +24,9 @@ library(scales)
 library(ggplot2)
 library(dplyr)
 library(sf)
+library(ggspatial)
+library(rnaturalearth)
+library(rnaturalearthdata)
 
 
 
@@ -60,14 +63,14 @@ plot_standard_ests<-function(df,title,ylab,xlab,col_pallete){
   plot<-ggplot2::ggplot(df, aes(x=factor(df$Subpopulation), y=df$Estimate.P,alpha = 0.5)) +
   geom_bar(stat="identity",aes(fill=df$Subpopulation)) +
   scale_colour_manual(values = col_pallete)+
-  geom_crossbar(aes(x=factor(df$Subpopulation)), y=df$Estimate.P, ymin=df$LCB95Pct.P, ymax=df$UCB95Pct.P, colour="grey", alpha=0.5, size=0.5, fill = "grey")+
+  geom_crossbar( aes(x=factor(df$Subpopulation), y=df$Estimate.P, ymin=df$LCB95Pct.P, ymax=df$UCB95Pct.P), colour="grey", alpha=0.5, size=0.5, fill = "grey")+
   # ggpattern::geom_crossbar_pattern( aes(x=factor(chloride_ests$Category), y=chloride_ests$Estimate.P, ymin=chloride_ests$LCB95Pct.P, ymax=chloride_ests$UCB95Pct.P), size = 0.5)+
   geom_errorbar(aes(ymin= df$LCB95Pct.P,
                     ymax= df$UCB95Pct.P),
                 width=.2,                    # Width of the error bars
                 position="identity",
-                alpha = 0.5)+
-geom_text(aes(label = paste(Estimate.P_clean,"%",sep = "")), position = position_dodge(width = 1),vjust = -0.1, hjust = -0.5)+
+                alpha = 0.1)+
+geom_text(aes(label = paste(Estimate.P_clean,"%",sep = "")), position = position_dodge(width = 1),vjust = -0.1)+
   coord_flip()+ggtitle(label = title)+
   theme(legend.position = "none")
 
@@ -132,8 +135,8 @@ plot<-ggplot2::ggplot(df, aes(fill=Category, y=Estimate.P, x = Subpopulation)) +
                     ymax= UCB95Pct.P),
                 width=.2,                    # Width of the error bars
                 position = position_dodge(width = 0.9),
-                alpha = 0.5)+
-geom_text(aes(label = paste(Estimate.P_clean,"%",sep = "")),position = position_dodge(width = 1),vjust = -0.1, hjust = -0.5)+
+                alpha = 0.1)+
+geom_text(aes(label = paste(Estimate.P_clean,"%",sep = "")), position = position_dodge(width = 1),vjust = -0.1)+
   coord_flip()+ggtitle(label = paste(stringr::str_to_title(param),sep = " "))+
   theme(legend.position = "none")+
   scale_x_discrete(limits = rev)+
@@ -344,36 +347,9 @@ others<-toxins |>
 
 ```
 
-
-## Map of sites with toxin detection status
-
-```{r toxins-all-map ,message=FALSE,warning=FALSE}
-
-# Assuming your dataframe is named 'df'
-toxins_map <- toxins2 %>%
-  filter(PARAMETER_NAME %in% parameter_list) |> 
-  group_by(SITE_CODE) %>%
-  summarize(
-    any_detect = if_else(any(!is.na(RESULT_VALUE)), "Yes", "No")
-  )
-
-percent_of_sites<-toxins_map |> 
-  group_by(any_detect) |> 
-  tally() |> 
-  mutate(total_sites = 81) |> 
-  mutate(percentage = (n/total_sites)*100)
-
-site_locations<-toxins2 |> 
-  select(SITE_CODE, SAMPLE_LATITUDE, SAMPLE_LONGITUDE) |> 
-  distinct() |> 
-  left_join(toxins_map)
-
-
-```
-
 ## Cat analysis - run spsurvey
 
-```{r toxins-spsurvey,message = FALSE, warning = FALSE, fig.width=10}
+```{r toxins-spsurvey,message = FALSE, warning = FALSE}
 
 parameter_list<-c("anatoxin_a",                                       "cylindrospermopsin",                                  
 "microcystin_la",                                      
@@ -471,6 +447,74 @@ AAABBBCCC
 "
 
 mc_plot + ana_plot+ nod_plot +plot_layout(nrow = 1,ncol = 3,axis_titles = "collect",guides = "collect",axes = "collect",design = layout)
+
+
+```
+
+## Map of sites with toxin detection status
+
+```{r toxins-all-map ,message=FALSE,warning=FALSE}
+
+toxins_map <- toxins2 %>%
+  filter(PARAMETER_NAME %in% parameter_list) |> 
+  group_by(SITE_CODE) %>%
+  summarize(
+    any_detect = if_else(any(!is.na(RESULT_VALUE)), "Yes", "No")
+  )
+
+percent_of_sites<-toxins_map |> 
+  group_by(any_detect) |> 
+  tally() |> 
+  mutate(total_sites = 81) |> 
+  mutate(percentage = (n/total_sites)*100)
+
+site_locations<-toxins2 |> 
+  select(SITE_CODE, SAMPLE_LATITUDE, SAMPLE_LONGITUDE) |> 
+  distinct() |> 
+  left_join(toxins_map) |> 
+  filter(!is.na(any_detect))
+
+nys_shape<- st_read("L:/DOW/BWAM Share/data/gis/NYS_Shape/NY_state_2m_Polygon.shp")
+
+site_locations_points <- st_as_sf(site_locations, coords = c("SAMPLE_LONGITUDE", "SAMPLE_LATITUDE"), crs = 4326)
+
+# Define the target CRS (replace 'EPSG:4326' with your desired CRS)
+target_crs <- st_crs("EPSG:26918")
+
+# Transform the polygon layer to the target CRS
+site_locations_points <- st_transform(site_locations_points, target_crs)
+
+
+ggplot() +
+  # Layer 1: Plot the NYS background map
+  geom_sf(data = nys_shape, fill = "white", color = "gray60") +
+  
+  # Layer 2: Plot the lake points and map the "yes_no_field" to color
+  # Note: Replace 'yes_no_field' with the exact name of your column
+  geom_sf(data = site_locations_points, aes(color = as.factor(any_detect)), size = 2.5) +
+  
+  # Layer 3: Customize the categorical colors manually
+  scale_color_manual(
+    values = c("No" = "#233F2B", "Yes" = "#FACE00"), # Custom Hex codes for your values
+    name = "Toxins Detected"                         # Title for your map legend
+  ) +
+  
+  # Layer 4: Formatting and clean presentation layout
+  theme_minimal() +
+  labs(
+    title = "Benthic HAB Toxins Detections",
+    x = "", 
+    y = ""
+  )+
+  theme(
+    legend.background = element_rect(fill = "white", colour = "black", linewidth = 0.5),
+    panel.grid = element_blank(),    # Removes grid lines
+    axis.text = element_blank(),     # Removes lat/long text labels
+    axis.ticks = element_blank(),    # Removes tick marks
+    axis.title = element_blank(),    # Removes axis titles (Lat/Long)
+    panel.background = element_rect(fill = "gray75", color = NA), # Map interior
+    plot.background = element_rect(fill = "gray75", color = NA)   # Map margins
+  )
 
 
 ```
@@ -603,9 +647,9 @@ i+s +plot_layout(ncol = 2, nrow = 1, guides = "collect")+plot_annotation(title =
 
 ```{r plot-means, fig.width=10}
 
-ids_plot_means<-ggplot(toxins_IDS$Mean, aes(x = factor(Subpopulation), y = Estimate)) +
-  geom_bar(stat="identity", aes(fill = Subpopulation), alpha = 0.5) +
-  scale_fill_manual(values = my_palette4$primary)+
+ids_plot_means<-ggplot(toxins_IDS$Mean, aes(x = Subpopulation, y = Estimate)) +
+   geom_bar(stat="identity",aes(fill=Subpopulation)) +
+  scale_colour_manual(values = my_palette4)+
   geom_crossbar( aes(x=Subpopulation, y=Estimate,
                      ymin=LCB95Pct,
                      ymax=UCB95Pct),
@@ -615,18 +659,17 @@ ids_plot_means<-ggplot(toxins_IDS$Mean, aes(x = factor(Subpopulation), y = Estim
                 width=.2,                    # Width of the error bars
                 position="identity",
                 alpha = 0.5)+
-   geom_text(aes(label = Estimate.P_clean, group = Subpopulation), position = position_dodge(width = 1), vjust = -0.1, hjust = -0.5)+
+   geom_text(aes(label = paste(Estimate.P_clean,"",sep = "")), position = position_dodge(width = 1),vjust = -0.1)+
   labs(x = "Toxin",
        y = "Estimated Value (ug/L)")+
   coord_flip()+ggtitle(label = "IDS Samples")+
-   scale_x_discrete(limits = rev)+
-  theme_minimal()+
-  theme(legend.position="none")
+  theme(legend.position = "none")+
+  scale_x_discrete(limits = rev)+
+  theme_minimal()
 ids_plot_means
 
 scrape_plot_means<-ggplot(toxins_scrape$Mean, aes(x = Subpopulation, y = Estimate)) +
-  geom_bar(stat="identity", aes(fill = Subpopulation), alpha = 0.5) +
-  scale_fill_manual(values = my_palette4$primary)+
+    geom_bar(stat="identity",aes(fill=Subpopulation)) +
   geom_crossbar( aes(x=Subpopulation, y=Estimate,
                      ymin=LCB95Pct,
                      ymax=UCB95Pct),
@@ -636,13 +679,13 @@ scrape_plot_means<-ggplot(toxins_scrape$Mean, aes(x = Subpopulation, y = Estimat
                 width=.2,                    # Width of the error bars
                 position="identity",
                 alpha = 0.5)+
-   geom_text(aes(label = Estimate.P_clean, group = Subpopulation), position = position_dodge(width = 1), vjust = -0.1, hjust = -0.5)+
+  geom_text(aes(label = paste(Estimate.P_clean,"",sep = "")), position = position_dodge(width = 1),vjust = -0.1)+
   labs(x = "Toxin",
        y = "Estimated Value (ug/L)")+
   coord_flip()+ggtitle(label = "Scrape Samples")+
-   scale_x_discrete(limits = rev)+
-  theme_minimal()+
-  theme(legend.position="none")
+  theme(legend.position = "none")+
+  scale_x_discrete(limits = rev)+
+  theme_minimal()
 scrape_plot_means
 
 ids_plot_means + scrape_plot_means +plot_layout(ncol = 2, nrow = 1, axes = "collect",guides = "collect", axis_titles = "collect")
@@ -958,7 +1001,7 @@ plot_extent_impaired<-ggplot2::ggplot(standard_ests_spl_all_short, aes(x=Indicat
                 width=.2,                    # Width of the error bars
                 position="identity",
                 alpha = 0.5)+
-  geom_text(aes(label = paste(Estimate.P_clean,"%",sep = ""), vjust = -0.1, hjust = -0.5))+
+  geom_text(aes(label = paste(Estimate.P_clean,"%",sep = ""), vjust = -0.1))+
   coord_flip()+ggtitle(label = "Extent")+
   theme(legend.position = "none")+
   labs(y = "Estimated % of Lakes in NYS",
@@ -1082,13 +1125,13 @@ risk_all$Stressor<-dplyr::recode(risk_all$Stressor,
 plot_risk<-risk_all |> 
   ggplot2::ggplot(aes(x=Stressor,
                                          y=Estimate)) +
-  geom_point(stat="identity",fill ="grey") +
-  geom_crossbar( aes(x=Stressor, y=Estimate, ymin=LCB95Pct, ymax=UCB95Pct), colour="grey", alpha=0.5, size=0.5, fill = "grey")+
-  # geom_errorbar(aes(ymin= LCB95Pct,
-  #                   ymax= UCB95Pct),
-  #               width=.2,                    # Width of the error bars
-  #               position="identity",
-  #               alpha = 0.5)+
+  geom_point(stat="identity",fill ="#233F2B") +
+  geom_crossbar( aes(x=Stressor, y=Estimate, ymin=LCB95Pct, ymax=UCB95Pct), colour="grey", alpha=0.1, size=0.5, fill = "grey")+
+  geom_errorbar(aes(ymin= LCB95Pct,
+                    ymax= UCB95Pct),
+                width=.2,                    # Width of the error bars
+                position="identity",
+                alpha = 0.09)+
   geom_text(aes(label = Estimate_clean, vjust = -0.1))+
   coord_flip()+ggtitle(label = "Relative Risk")+
   theme(legend.position = "none")+
