@@ -610,7 +610,7 @@ scrape_plot_means<-ggplot(toxins_scrape$Mean, aes(x = Subpopulation, y = Estimat
    geom_text(aes(label = Estimate.P_clean, group = Subpopulation), position = position_dodge(width = 1), vjust = -0.1, hjust = -0.5)+
   labs(x = "Toxin",
        y = "Estimated Value (ug/L)")+
-  coord_flip()+ggtitle(label = "IDS Samples")+
+  coord_flip()+ggtitle(label = "Scrape Samples")+
    scale_x_discrete(limits = rev)+
   theme_minimal()+
   theme(legend.position="none")
