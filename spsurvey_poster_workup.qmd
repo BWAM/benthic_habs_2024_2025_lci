@@ -5,7 +5,7 @@ format:
     embed-resources: true
     self-contained-math: true
 params:
-  user: kareynol
+  user: mpkraft
 editor: visual
 execute:
   echo: false 
@@ -23,6 +23,7 @@ library(palettes)
 library(scales)
 library(ggplot2)
 library(dplyr)
+library(sf)
 
 
 
@@ -248,7 +249,6 @@ scale_all<-scale_all |>
 
 ```
 
-
 ## reweigh the design
 
 ```{r reweight_the_design, message = FALSE, warning = FALSE}
@@ -340,6 +340,33 @@ toxins2<-toxins |>
 others<-toxins |> 
   left_join(sites_wgts) |> 
   filter(is.na(final_weight)) #there are extras - not sure where they are from
+
+
+```
+
+
+## Map of sites with toxin detection status
+
+```{r toxins-all-map ,message=FALSE,warning=FALSE}
+
+# Assuming your dataframe is named 'df'
+toxins_map <- toxins2 %>%
+  filter(PARAMETER_NAME %in% parameter_list) |> 
+  group_by(SITE_CODE) %>%
+  summarize(
+    any_detect = if_else(any(!is.na(RESULT_VALUE)), "Yes", "No")
+  )
+
+percent_of_sites<-toxins_map |> 
+  group_by(any_detect) |> 
+  tally() |> 
+  mutate(total_sites = 81) |> 
+  mutate(percentage = (n/total_sites)*100)
+
+site_locations<-toxins2 |> 
+  select(SITE_CODE, SAMPLE_LATITUDE, SAMPLE_LONGITUDE) |> 
+  distinct() |> 
+  left_join(toxins_map)
 
 
 ```
@@ -447,6 +474,7 @@ mc_plot + ana_plot+ nod_plot +plot_layout(nrow = 1,ncol = 3,axis_titles = "colle
 
 
 ```
+
 ## Just toxins present overall and then by method (not by toxin species)
 
 ```{r toxins-all,message=FALSE,warning=FALSE}
@@ -502,7 +530,8 @@ lake_plot2<-plot_cat_analysis(df = standard_ests_overall_by_method, param = "Est
 lake_plot2
 
 ```
-## Continous estimates by toxin 
+
+## Continous estimates by toxin
 
 ```{r}
 
@@ -571,6 +600,7 @@ i+s +plot_layout(ncol = 2, nrow = 1, guides = "collect")+plot_annotation(title =
 ```
 
 # Plot Means (COnt analysis)
+
 ```{r plot-means, fig.width=10}
 
 ids_plot_means<-ggplot(toxins_IDS$Mean, aes(x = Subpopulation, y = Estimate)) +
@@ -617,8 +647,6 @@ scrape_plot_means
 ids_plot_means + scrape_plot_means +plot_layout(ncol = 2, nrow = 1, axes = "collect",guides = "collect", axis_titles = "collect")
 
 ```
-
-
 
 ## species - cat analysis
 
