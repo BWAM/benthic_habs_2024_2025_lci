@@ -24,7 +24,10 @@ library(scales)
 library(ggplot2)
 library(dplyr)
 
+
+
 #plotting function
+
 
 #define pallet 
 # Define your palette
@@ -34,6 +37,10 @@ my_palette <- list(
 
 my_palette2 <- list(
   primary = c("#154973","#FACE00")
+)
+
+my_palette4 <- list(
+  primary = c("#154973","#233F2B","#FACE00","#7E9084")
 )
 
 # Create a discrete scale function
@@ -58,7 +65,7 @@ plot_standard_ests<-function(df,title,ylab,xlab,col_pallete){
                     ymax= df$UCB95Pct.P),
                 width=.2,                    # Width of the error bars
                 position="identity",
-                alpha = 0.5)+
+                alpha = 0.1)+
 geom_text(aes(label = paste(Estimate.P_clean,"%",sep = "")), position = position_dodge(width = 1),vjust = -0.1)+
   coord_flip()+ggtitle(label = title)+
   theme(legend.position = "none")
@@ -124,7 +131,7 @@ plot<-ggplot2::ggplot(df, aes(fill=Category, y=Estimate.P, x = Subpopulation)) +
                     ymax= UCB95Pct.P),
                 width=.2,                    # Width of the error bars
                 position = position_dodge(width = 0.9),
-                alpha = 0.5)+
+                alpha = 0.1)+
 geom_text(aes(label = paste(Estimate.P_clean,"%",sep = "")), position = position_dodge(width = 1),vjust = -0.1)+
   coord_flip()+ggtitle(label = paste(stringr::str_to_title(param),sep = " "))+
   theme(legend.position = "none")+
@@ -432,7 +439,11 @@ cyl_plot
 
 library(patchwork)
 
-mc_plot + ana_plot+ nod_plot +plot_layout(nrow = 1,ncol = 3,axis_titles = "collect",guides = "collect",axes = "collect")
+layout <- "
+AAABBBCCC
+"
+
+mc_plot + ana_plot+ nod_plot +plot_layout(nrow = 1,ncol = 3,axis_titles = "collect",guides = "collect",axes = "collect",design = layout)
 
 
 ```
@@ -491,6 +502,122 @@ lake_plot2<-plot_cat_analysis(df = standard_ests_overall_by_method, param = "Est
 lake_plot2
 
 ```
+## Continous estimates by toxin 
+
+```{r}
+
+options(scipen = 9999)
+cont_tox_IDS<-toxins.sf |> 
+  filter(PARAMETER_NAME %in% c("anatoxin_a","microcystin","cylindrospermopsin","nodularin"),
+         SAMPLE_METHOD %in% "IDS",
+         !is.na(RESULT_VALUE)) 
+  
+
+cont_tox_scrape<-toxins.sf |> 
+  filter(PARAMETER_NAME %in% c("anatoxin_a","microcystin","cylindrospermopsin","nodularin"),
+         SAMPLE_METHOD %in% "scrape",
+         !is.na(RESULT_VALUE))
+
+# Run the CDF curves
+toxins_IDS<-spsurvey::cont_analysis(
+    dframe = cont_tox_IDS,
+    siteID = "SITE_CODE",
+    vars = "RESULT_VALUE",
+    subpops = "PARAMETER_NAME",
+    weight = "final_weight"
+  )
+
+toxins_scrape<-spsurvey::cont_analysis(
+    dframe = cont_tox_scrape,
+    siteID = "SITE_CODE",
+    vars = "RESULT_VALUE",
+    subpops = "PARAMETER_NAME",
+    weight = "final_weight"
+  )
+
+#plot them - first make some cleaner plotting estimates
+toxins_IDS$CDF<-toxins_IDS$CDF |> 
+  mutate(Estimate.P_clean = round(Estimate.P, digits = 2))
+toxins_scrape$CDF<-toxins_scrape$CDF |> 
+  mutate(Estimate.P_clean = round(Estimate.P, digits = 2))
+
+
+toxins_IDS$Mean<-toxins_IDS$Mean |> 
+  mutate(Estimate.P_clean = round(Estimate, digits = 2))
+toxins_scrape$Mean<-toxins_scrape$Mean |> 
+  mutate(Estimate.P_clean = round(Estimate, digits = 2))
+
+
+ids<-ggplot(toxins_IDS$CDF, aes(x = Value, y = Estimate.P)) +
+  geom_line(color = "grey")+
+  geom_ribbon(aes(ymin = LCB95Pct.P,ymax = UCB95Pct.P ), fill = "blue", alpha = 0.2)+
+labs(title = "IDS",
+x = "Toxins ug/L", y = "% of Lakes")+
+  theme_minimal()
+i<-ids+facet_wrap(~Subpopulation,scales = "free")
+
+
+
+scrape<-ggplot(toxins_scrape$CDF, aes(x = Value, y = Estimate.P)) +
+  geom_line(color = "grey")+
+  geom_ribbon(aes(ymin = LCB95Pct.P,ymax = UCB95Pct.P ), fill = "blue", alpha = 0.2)+
+labs(title = "Scrape",
+x = "Toxins ug/L", y = "% of Lakes")+
+  theme_minimal()
+s<-scrape+facet_wrap(~Subpopulation,scales = "free")
+
+i+s +plot_layout(ncol = 2, nrow = 1, guides = "collect")+plot_annotation(title = "Cumulative Probability Distribution of Toxin (ug/L) values by method")
+
+```
+
+# Plot Means (COnt analysis)
+```{r plot-means, fig.width=10}
+
+ids_plot_means<-ggplot(toxins_IDS$Mean, aes(x = Subpopulation, y = Estimate)) +
+   geom_bar(stat="identity",aes(fill=Subpopulation)) +
+  scale_colour_manual(values = my_palette4)+
+  geom_crossbar( aes(x=Subpopulation, y=Estimate,
+                     ymin=LCB95Pct,
+                     ymax=UCB95Pct),
+                 colour="grey", alpha=0.5, size=0.5, fill = "grey")+
+  geom_errorbar(aes(ymin= LCB95Pct,
+                    ymax= UCB95Pct),
+                width=.2,                    # Width of the error bars
+                position="identity",
+                alpha = 0.5)+
+   geom_text(aes(label = paste(Estimate.P_clean,"",sep = "")), position = position_dodge(width = 1),vjust = -0.1)+
+  labs(x = "Toxin",
+       y = "Estimated Value (ug/L)")+
+  coord_flip()+ggtitle(label = "IDS Samples")+
+  theme(legend.position = "none")+
+  scale_x_discrete(limits = rev)+
+  theme_minimal()
+ids_plot_means
+
+scrape_plot_means<-ggplot(toxins_scrape$Mean, aes(x = Subpopulation, y = Estimate)) +
+    geom_bar(stat="identity",aes(fill=Subpopulation)) +
+  geom_crossbar( aes(x=Subpopulation, y=Estimate,
+                     ymin=LCB95Pct,
+                     ymax=UCB95Pct),
+                 colour="grey", alpha=0.5, size=0.5, fill = "grey")+
+  geom_errorbar(aes(ymin= LCB95Pct,
+                    ymax= UCB95Pct),
+                width=.2,                    # Width of the error bars
+                position="identity",
+                alpha = 0.5)+
+  geom_text(aes(label = paste(Estimate.P_clean,"",sep = "")), position = position_dodge(width = 1),vjust = -0.1)+
+  labs(x = "Toxin",
+       y = "Estimated Value (ug/L)")+
+  coord_flip()+ggtitle(label = "Scrape Samples")+
+  theme(legend.position = "none")+
+  scale_x_discrete(limits = rev)+
+  theme_minimal()
+scrape_plot_means
+
+ids_plot_means + scrape_plot_means +plot_layout(ncol = 2, nrow = 1, axes = "collect",guides = "collect", axis_titles = "collect")
+
+```
+
 
 
 ## species - cat analysis
