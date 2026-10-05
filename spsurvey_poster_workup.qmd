@@ -474,7 +474,7 @@ site_locations<-toxins2 |>
   left_join(toxins_map) |> 
   filter(!is.na(any_detect))
 
-nys_shape<- st_read("L:/DOW/BWAM Share/data/gis/NYS_Shape/NY_state_2m_Polygon.shp")
+nys_major_drainage_basins<- st_read("L:/DOW/BWAM Share/data/gis/nys_major_drainage_basins/nys_major_drainage_basins.shp")
 
 site_locations_points <- st_as_sf(site_locations, coords = c("SAMPLE_LONGITUDE", "SAMPLE_LATITUDE"), crs = 4326)
 
@@ -487,7 +487,7 @@ site_locations_points <- st_transform(site_locations_points, target_crs)
 
 ggplot() +
   # Layer 1: Plot the NYS background map
-  geom_sf(data = nys_shape, fill = "white", color = "gray60") +
+  geom_sf(data = nys_major_drainage_basins, fill = "white", color = "gray60") +
   
   # Layer 2: Plot the lake points and map the "yes_no_field" to color
   # Note: Replace 'yes_no_field' with the exact name of your column
@@ -513,8 +513,24 @@ ggplot() +
     axis.ticks = element_blank(),    # Removes tick marks
     axis.title = element_blank(),    # Removes axis titles (Lat/Long)
     panel.background = element_rect(fill = "gray75", color = NA), # Map interior
-    plot.background = element_rect(fill = "gray75", color = NA)   # Map margins
-  )
+    plot.background = element_rect(fill = "gray75", color = NA),   # Map margins
+    panel.border = element_rect(color = "gray75", fill = NA, linewidth = 1),
+  )+
+  # Add the scale bar
+  annotation_scale(
+    location = "bl",       # "bl" = bottom left
+    width_hint = 0.3,      # Approx proportion of the map width to occupy
+    unit_category = "metric" # Uses km/m (use "imperial" for mi/ft)
+  ) +
+  
+  # Add the north arrow
+  annotation_north_arrow(
+    location = "tr",       # "tr" = top right
+    which_north = "true",  # Adjusts for the map projection
+    pad_x = unit(0.4, "in"), 
+    pad_y = unit(0.4, "in"), # Space padding from the edge
+    style = north_arrow_fancy_orienteering
+  )+theme(legend.position = c(0.3, 0.20)) # Places legend at x=0.85, y=0.20 inside the panel
 
 
 ```
@@ -696,9 +712,9 @@ ids_plot_means + scrape_plot_means +plot_layout(ncol = 2, nrow = 1, axes = "coll
 
 ```{r, message = FALSE, warning = FALSE}
 
-microscopy_24<-read.csv(paste("C:/Users/",params$user,"/OneDrive - New York State Office of Information Technology Services/Desktop/R_SMAS/LCI_benthic_habs_2025/data/microscopy_2024.csv",sep = ""))
+microscopy_24<-read.csv("data/microscopy_2024.csv")
 
-microscopy_25<-read.csv(paste("C:/Users/", params$user,"/OneDrive - New York State Office of Information Technology Services/Desktop/R_SMAS/LCI_benthic_habs_2025/data/microscopy_2025.csv",sep = ""))
+microscopy_25<-read.csv("data/microscopy_2025.csv")
 
 taxa<-plyr::rbind.fill(microscopy_24,microscopy_25)
 
