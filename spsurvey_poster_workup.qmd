@@ -27,6 +27,8 @@ library(sf)
 library(ggspatial)
 library(rnaturalearth)
 library(rnaturalearthdata)
+library(readr)
+library(tidyverse)
 
 
 
@@ -1262,3 +1264,137 @@ library(patchwork)
 plot_extent_impaired +plot_risk + plot_attrib_risk +plot_layout(nrow = 1,ncol = 3,axis_titles = "collect",guides = "collect",axes = "collect")
 
 ```
+## Drivers
+
+```{r water chem and phab distributions}
+
+# All lake data
+water_chem <- open_dataset(obt_result_dir) |> 
+  filter(WATERBODY_TYPE %in% "lake",
+         PROJECT %in% "Lake Probability Sampling 2024-2025",
+         SAMPLE_LOCATION %in% c("open_water","secchi_depth"),
+         PARAMETER_NAME %in% c("ammonia", "phosphorus", "kjeldahl_nitrogen", "secchi_disk_depth", 
+                               "nitrate_nitrite"),
+         between(EVENT_DATETIME, # 2.2
+                 left = lubridate::ymd("2024-01-01"),
+                 right = lubridate::ymd("2025-12-31"))) |> 
+  select(SITE_CODE,
+         PROJECT,
+         EVENT_ID,
+         SITE_CODE,
+         EVENT_DATETIME,
+         SAMPLE_LOCATION,
+         FRACTION,
+         PARAMETER_NAME,
+         RESULT_VALUE,
+         UNIT,
+         RESULT_QUALIFIER,
+         DETECT_FLAG,
+         METHOD_DETECTION_LIMIT) |> 
+  distinct() |> 
+  collect() 
+
+water_chem<-water_chem |> 
+  #Change phosphorus to total and dissolved
+  mutate(PARAMETER_NAME = case_when(
+    PARAMETER_NAME %in% "phosphorus" & FRACTION %in% "total" ~ "total_phosphorus",
+    PARAMETER_NAME %in% "phosphorus" & FRACTION %in% "dissolved" ~ "dissolved_phosphorus",
+    .default = PARAMETER_NAME
+  ))
+
+phab_metrics_24 <- read_rds("L:/DOW/BWAM Share/data/data_warehouse_staging/2024_V3/raw_data/lake/phab/physical_habitat_results.rds")
+phab_metrics_25 <- read_rds("L:/DOW/BWAM Share/data/data_warehouse_staging/2025/lci/phab/physical_habitat_results.rds")
+
+phab_metrics<-rbind(phab_metrics_25, phab_metrics_24) |> 
+  filter(PROJECT %in% "Lake Probability Sampling 2024-2025")
+
+canopy_cover<-phab_metrics |>
+  select(-EVENT_ID, -EVENT_DATETIME) |> 
+  filter(PARAMETER_NAME %in% "canopy_densiometer_percent") |> 
+  mutate(SITE_CODE = str_replace_all(SITE_CODE, "PHAB_(10|[1-9])\\b", "DH")) |> 
+  group_by(SITE_CODE) |> 
+  mutate(RESULT_VALUE = mean(RESULT_VALUE)) |> 
+  select(
+         SITE_CODE,
+         PROJECT,
+         SAMPLE_LOCATION,
+         FRACTION,
+         PARAMETER_NAME,
+         RESULT_VALUE,
+         UNIT,
+         RESULT_QUALIFIER,
+         DETECT_FLAG,
+         METHOD_DETECTION_LIMIT) |> 
+   distinct()
+
+event_info_24_25<-phab_metrics |> 
+  select(EVENT_ID, SITE_CODE, EVENT_DATETIME) |> 
+  filter(str_detect(EVENT_ID, "_DH")) |> 
+  distinct()
+
+canopy_cover<-canopy_cover |> 
+  left_join(event_info_24_25)
+  
+phab_metrics_short<-phab_metrics |> 
+  filter(PARAMETER_NAME %in% c("rdis_ix", "litripcvrqc3oe", "litcvrqc3oe", "rvegqc3oe")) |> 
+  select(
+         SITE_CODE,
+         PROJECT,
+         EVENT_ID,
+         SITE_CODE,
+         EVENT_DATETIME,
+         SAMPLE_LOCATION,
+         FRACTION,
+         PARAMETER_NAME,
+         RESULT_VALUE,
+         UNIT,
+         RESULT_QUALIFIER,
+         DETECT_FLAG,
+         METHOD_DETECTION_LIMIT)
+
+water_chem_phab<-rbind(water_chem, phab_metrics_short, canopy_cover)
+
+drivers<-site_locations |> 
+  left_join(water_chem_phab)
+
+#Change non-detects to half detection limit
+drivers<-drivers |> 
+  mutate(RESULT_VALUE = case_when(
+    is.na(RESULT_VALUE) ~ 0.5*METHOD_DETECTION_LIMIT, 
+    .default = RESULT_VALUE
+  ))
+
+#Log transform phosphorus and nitrogen
+drivers<-drivers |>
+  mutate(RESULT_VALUE = case_when(
+   PARAMETER_NAME %in% c("ammonia", "total_phosphorus","dissolved_phosphorus","kjeldahl_nitrogen", "nitrate_nitrite") ~ log(RESULT_VALUE),
+   .default = RESULT_VALUE
+  ))
+
+
+# 1. Combine parameter_name and UNIT into a formatted label
+df_plot <- drivers %>%
+  mutate(facet_label = paste0(PARAMETER_NAME, " (", UNIT, ")"))
+
+# 2. Plot with free y-scales so each parameter's units make sense
+ggplot(df_plot, aes(x = any_detect, y = RESULT_VALUE, fill = any_detect)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = NA) +
+  # Layer 3: Customize the categorical colors manually
+  scale_fill_manual(
+    values = c("No" = "#154973", "Yes" = "#FACE00"), # Custom Hex codes for your values
+    name = "Toxins Detected"                         # Title for your map legend
+  ) +
+  geom_jitter(width = 0.2, alpha = 0.4) +
+  facet_wrap(~ facet_label, scales = "free_y") +
+  labs(
+    x = "Any Detect",
+    y = "Result Value",
+    fill = "Any Detect",
+    title = "Parameter Distributions by Detect Status"
+  ) +
+  theme_bw() +
+  theme(legend.position = "none") # Removes redundant legend if x-axis is already labeled
+
+
+```
+
