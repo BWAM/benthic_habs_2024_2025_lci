@@ -5,7 +5,7 @@ format:
     embed-resources: true
     self-contained-math: true
 params:
-  user: mpkraft
+  user: kareynol
 editor: visual
 execute:
   echo: false 
@@ -696,9 +696,8 @@ ids_plot_means + scrape_plot_means +plot_layout(ncol = 2, nrow = 1, axes = "coll
 
 ```{r, message = FALSE, warning = FALSE}
 
-microscopy_24<-read.csv(paste("C:/Users/",params$user,"/OneDrive - New York State Office of Information Technology Services/Desktop/R_SMAS/LCI_benthic_habs_2025/data/microscopy_2024.csv",sep = ""))
-
-microscopy_25<-read.csv(paste("C:/Users/", params$user,"/OneDrive - New York State Office of Information Technology Services/Desktop/R_SMAS/LCI_benthic_habs_2025/data/microscopy_2025.csv",sep = ""))
+microscopy_24<-read.csv(here::here("data/microscopy_2024.csv"))
+microscopy_25<-read.csv(here::here("data/microscopy_2025.csv"))
 
 taxa<-plyr::rbind.fill(microscopy_24,microscopy_25)
 
@@ -720,28 +719,49 @@ taxa_sum2<-taxa_sum |>
    ))
  
 lakes_with_cyanos<-taxa_sum_cat |> 
-  filter(is_cyano %in% "yes") |> 
-  distinct(SITE_CODE,SAMPLE_METHOD,PARAMETER_NAME) |> 
-  mutate(present = "toxigenic_present")
+  mutate(toxigenic_present = case_when(is_cyano == "yes"~ "toxigenic_present",
+                                       is_cyano == "no" ~ "toxigenic_absent",
+                                       TRUE ~ "not_sampled")) |> 
+  mutate(tox_sp_num = case_when(is_cyano == "yes"~ 3,
+                                       is_cyano == "no" ~ 2,
+                                       TRUE ~ 1))
+
+#now let's slice them
+lakes_with_cyanos2<-lakes_with_cyanos |> 
+  group_by(SITE_CODE,SAMPLE_METHOD) |> 
+  select(SITE_CODE,SAMPLE_METHOD,toxigenic_present,tox_sp_num) |> 
+  filter(tox_sp_num == max(tox_sp_num)) |> 
+  distinct()
+
 
 
 taxa.sf<-toxins.sf |> 
-  left_join(lakes_with_cyanos,
-            by = c("SITE_CODE","SAMPLE_METHOD","PARAMETER_NAME")) |> 
-  mutate(present = present.x,
-         present.y = case_when(is.na(present.y)~ "not_observed",
-                               TRUE ~ present.y),
-         present = case_when(PARAMETER_NAME %in% "microscopy_dominant_taxa" ~ present.y,
-                             TRUE ~ present)) |> 
-  select(-c(present.x,present.y)) |> 
-  filter(SAMPLE_METHOD %in% c("scrape","floating_mat")) # we didnt do community analysis for the IDS
+  select(SITE_CODE,SAMPLE_METHOD,geometry,final_weight,present) |> 
+  distinct() |> 
+  left_join(lakes_with_cyanos2,
+            by = c("SITE_CODE","SAMPLE_METHOD")) |> 
+  filter(SAMPLE_METHOD %in% c("scrape","floating_mat")) |> 
+  distinct() |> 
+  mutate(toxin_present = present,
+         toxigenic_present = case_when(is.na(toxigenic_present) ~ "not_sampled",
+                                       TRUE~ toxigenic_present))
 
 
+  #run the spsurvey data
+tox_sp<-spsurvey::cat_analysis(
+  dframe = taxa.sf,
+  vars = "toxigenic_present",
+  subpops = "SAMPLE_METHOD",
+  siteID = "SITE_CODE",
+  weight = "final_weight"
+)
 
-tox_sp<-cat_analysis_function(df = taxa.sf, param = "microscopy_dominant_taxa")
-tox_sp_plot<-plot_cat_analysis(df = tox_sp, param = "microscopy_dominant_taxa",col_pallete = my_palette2$primary)
+
+tox_sp<-tox_sp |> 
+  filter(Category != "Total")
+tox_sp_plot<-plot_cat_analysis(df = tox_sp, param = "microscopy_dominant_taxa",col_pallete = my_palette$primary)
+
 tox_sp_plot + ggtitle ("Toxigenic Cyanobacteria observations")+xlab("Sample Method")
-
 
 taxa_sum<-taxa_sum_cat|> 
   mutate(total = 1) |> 
