@@ -710,15 +710,18 @@ taxa_sum<-taxa_sum_cat|>
 
 ```{r toxins-all-map ,message=FALSE,warning=FALSE}
 
+lakes_with_cyanos3<-lakes_with_cyanos2 |> 
+  select(SITE_CODE, toxigenic_present) |> 
+  filter(toxigenic_present %in% "toxigenic_present")
+
 toxins_map <- toxins2 %>%
   filter(PARAMETER_NAME %in% parameter_list) |> 
   group_by(SITE_CODE) %>%
   summarize(
     any_detect = if_else(any(!is.na(RESULT_VALUE)), "Yes", "No")
   ) |> 
-  left_join(lakes_with_cyanos) |> 
-  select(-PARAMETER_NAME) |> 
-  rename(cyano_present = present) |> 
+  left_join(lakes_with_cyanos3) |> 
+  rename(cyano_present = toxigenic_present) |> 
   mutate(cyano_present = case_when(
     is.na(cyano_present) ~ "No",
     cyano_present %in% "toxigenic_present" ~ "Yes",
@@ -786,7 +789,7 @@ ggplot() +
     pad_x = unit(0.4, "in"), 
     pad_y = unit(0.4, "in"), # Space padding from the edge
     style = north_arrow_fancy_orienteering
-  )+theme(legend.position = c(0.3, 0.20), legend.box = "horizontal") # Places legend at x=0.85, y=0.20 inside the panel
+  )+theme(legend.position = c(0.3, 0.20), legend.box = "horizontal", legend.key = element_rect(fill = "transparent", color = NA)) # Places legend at x=0.85, y=0.20 inside the panel
 
 
 ggsave("my_plot.png")
