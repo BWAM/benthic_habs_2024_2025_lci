@@ -221,6 +221,7 @@ lakes_l<-unique(lake_df$SITE_CODE)
 wgts_merge3<-wgts_merge2 |> 
   mutate(EvalStatus = case_when(
     Lake %in% "0903LOW0155_Lows Lake" ~ "PB",
+    Lake %in% "1301UWBXXX6_DH" ~ "MS", # Missing toxins and microscopy
     LOCATION_ID %in% lakes_l ~ "TS",
     TRUE ~ "NN"
   ))
@@ -451,73 +452,7 @@ mc_plot + ana_plot+ nod_plot +plot_layout(nrow = 1,ncol = 3,axis_titles = "colle
 
 ```
 
-## Map of sites with toxin detection status
 
-```{r toxins-all-map ,message=FALSE,warning=FALSE}
-
-toxins_map <- toxins2 %>%
-  filter(PARAMETER_NAME %in% parameter_list) |> 
-  group_by(SITE_CODE) %>%
-  summarize(
-    any_detect = if_else(any(!is.na(RESULT_VALUE)), "Yes", "No")
-  )
-
-percent_of_sites<-toxins_map |> 
-  group_by(any_detect) |> 
-  tally() |> 
-  mutate(total_sites = 81) |> 
-  mutate(percentage = (n/total_sites)*100)
-
-site_locations<-toxins2 |> 
-  select(SITE_CODE, SAMPLE_LATITUDE, SAMPLE_LONGITUDE) |> 
-  distinct() |> 
-  left_join(toxins_map) |> 
-  filter(!is.na(any_detect))
-
-nys_shape<- st_read("L:/DOW/BWAM Share/data/gis/NYS_Shape/NY_state_2m_Polygon.shp")
-
-site_locations_points <- st_as_sf(site_locations, coords = c("SAMPLE_LONGITUDE", "SAMPLE_LATITUDE"), crs = 4326)
-
-# Define the target CRS (replace 'EPSG:4326' with your desired CRS)
-target_crs <- st_crs("EPSG:26918")
-
-# Transform the polygon layer to the target CRS
-site_locations_points <- st_transform(site_locations_points, target_crs)
-
-
-ggplot() +
-  # Layer 1: Plot the NYS background map
-  geom_sf(data = nys_shape, fill = "white", color = "gray60") +
-  
-  # Layer 2: Plot the lake points and map the "yes_no_field" to color
-  # Note: Replace 'yes_no_field' with the exact name of your column
-  geom_sf(data = site_locations_points, aes(color = as.factor(any_detect)), size = 2.5) +
-  
-  # Layer 3: Customize the categorical colors manually
-  scale_color_manual(
-    values = c("No" = "#233F2B", "Yes" = "#FACE00"), # Custom Hex codes for your values
-    name = "Toxins Detected"                         # Title for your map legend
-  ) +
-  
-  # Layer 4: Formatting and clean presentation layout
-  theme_minimal() +
-  labs(
-    title = "Benthic HAB Toxins Detections",
-    x = "", 
-    y = ""
-  )+
-  theme(
-    legend.background = element_rect(fill = "white", colour = "black", linewidth = 0.5),
-    panel.grid = element_blank(),    # Removes grid lines
-    axis.text = element_blank(),     # Removes lat/long text labels
-    axis.ticks = element_blank(),    # Removes tick marks
-    axis.title = element_blank(),    # Removes axis titles (Lat/Long)
-    panel.background = element_rect(fill = "gray75", color = NA), # Map interior
-    plot.background = element_rect(fill = "gray75", color = NA)   # Map margins
-  )
-
-
-```
 
 ## Just toxins present overall and then by method (not by toxin species)
 
@@ -699,6 +634,7 @@ ids_plot_means + scrape_plot_means +plot_layout(ncol = 2, nrow = 1, axes = "coll
 microscopy_24<-read.csv(here::here("data/microscopy_2024.csv"))
 microscopy_25<-read.csv(here::here("data/microscopy_2025.csv"))
 
+
 taxa<-plyr::rbind.fill(microscopy_24,microscopy_25)
 
 taxa2<-taxa |> 
@@ -768,6 +704,94 @@ taxa_sum<-taxa_sum_cat|>
   group_by(SAMPLE_METHOD,RESULT_CATEGORY,is_cyano) |> 
   summarise(n = n())
 ```
+## Map of sites with toxin detection status
+
+```{r toxins-all-map ,message=FALSE,warning=FALSE}
+
+toxins_map <- toxins2 %>%
+  filter(PARAMETER_NAME %in% parameter_list) |> 
+  group_by(SITE_CODE) %>%
+  summarize(
+    any_detect = if_else(any(!is.na(RESULT_VALUE)), "Yes", "No")
+  ) |> 
+  left_join(lakes_with_cyanos) |> 
+  select(-PARAMETER_NAME) |> 
+  rename(cyano_present = present) |> 
+  mutate(cyano_present = case_when(
+    is.na(cyano_present) ~ "No",
+    cyano_present %in% "toxigenic_present" ~ "Yes",
+  )) |> 
+  distinct(SITE_CODE, any_detect, cyano_present)
+
+
+site_locations<-toxins2 |> 
+  select(SITE_CODE, SAMPLE_LATITUDE, SAMPLE_LONGITUDE) |> 
+  distinct() |> 
+  left_join(toxins_map) |> 
+  na.omit()
+
+nys_major_drainage_basins<- st_read("L:/DOW/BWAM Share/data/gis/nys_major_drainage_basins/nys_major_drainage_basins.shp")
+
+site_locations_points <- st_as_sf(site_locations, coords = c("SAMPLE_LONGITUDE", "SAMPLE_LATITUDE"), crs = 4326)
+
+# Define the target CRS (replace 'EPSG:4326' with your desired CRS)
+target_crs <- st_crs("EPSG:26918")
+
+# Transform the polygon layer to the target CRS
+site_locations_points <- st_transform(site_locations_points, target_crs)
+
+
+ggplot() +
+  # Layer 1: Plot the NYS background map
+  geom_sf(data = nys_major_drainage_basins, fill = "white", color = "gray60") +
+  
+  # Layer 2: Plot the lake points and map the "yes_no_field" to color
+  # Note: Replace 'yes_no_field' with the exact name of your column
+  geom_sf(data = site_locations_points, aes(color = as.factor(any_detect), shape = cyano_present), size = 2.5) +
+  
+  # Layer 3: Customize the categorical colors manually
+  scale_color_manual(
+    values = c("No" = "#233F2B", "Yes" = "#FACE00"), # Custom Hex codes for your values
+    name = "Toxins Detected"                         # Title for your map legend
+  ) +
+ scale_shape_manual(
+    name = "Cyanos Present",
+    values = c("Yes" = 16, "No" = 17) # 16 = Filled Circle, 17 = Filled Triangle
+  ) +
+  
+  # Layer 4: Formatting and clean presentation layout
+  theme(
+    legend.background = element_rect(fill = "white", colour = "black", linewidth = 0.5),
+    panel.grid = element_blank(),    # Removes grid lines
+    axis.text = element_blank(),     # Removes lat/long text labels
+    axis.ticks = element_blank(),    # Removes tick marks
+    axis.title = element_blank(),    # Removes axis titles (Lat/Long)
+    panel.background = element_rect(fill = "gray75", color = NA), # Map interior
+    plot.background = element_rect(fill = "gray75", color = NA),   # Map margins
+    panel.border = element_rect(color = "gray75", fill = NA, linewidth = 1),
+  )+
+  # Add the scale bar
+  annotation_scale(
+    location = "bl",       # "bl" = bottom left
+    width_hint = 0.3,      # Approx proportion of the map width to occupy
+    unit_category = "metric" # Uses km/m (use "imperial" for mi/ft)
+  ) +
+  
+  # Add the north arrow
+  annotation_north_arrow(
+    location = "tr",       # "tr" = top right
+    which_north = "true",  # Adjusts for the map projection
+    pad_x = unit(0.4, "in"), 
+    pad_y = unit(0.4, "in"), # Space padding from the edge
+    style = north_arrow_fancy_orienteering
+  )+theme(legend.position = c(0.3, 0.20), legend.box = "horizontal") # Places legend at x=0.85, y=0.20 inside the panel
+
+
+ggsave("my_plot.png")
+
+
+```
+
 
 ## Extent - Impacted Categories
 
