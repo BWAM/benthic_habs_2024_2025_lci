@@ -221,6 +221,7 @@ lakes_l<-unique(lake_df$SITE_CODE)
 wgts_merge3<-wgts_merge2 |> 
   mutate(EvalStatus = case_when(
     Lake %in% "0903LOW0155_Lows Lake" ~ "PB",
+    Lake %in% "1301UWBXXX6_DH" ~ "MS", # Missing toxins and microscopy
     LOCATION_ID %in% lakes_l ~ "TS",
     TRUE ~ "NN"
   ))
