@@ -756,7 +756,7 @@ ggplot() +
   
   # Layer 3: Customize the categorical colors manually
   scale_color_manual(
-    values = c("No" = "#233F2B", "Yes" = "#FACE00"), # Custom Hex codes for your values
+    values = c("No" = "#154973", "Yes" = "#FACE00"), # Custom Hex codes for your values
     name = "Toxins Detected"                         # Title for your map legend
   ) +
  scale_shape_manual(
