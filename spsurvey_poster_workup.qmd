@@ -5,7 +5,7 @@ format:
     embed-resources: true
     self-contained-math: true
 params:
-  user: kareynol
+  user: mpkraft
 editor: visual
 execute:
   echo: false 
@@ -209,6 +209,7 @@ lake_df <- open_dataset(obt_result_dir) |>
          EVENT_ID,
          EVENT_DATETIME,
          FRACTION,
+         SAMPLE_LOCATION,
          PARAMETER_NAME,
          RESULT_VALUE,
          UNIT,
@@ -217,6 +218,11 @@ lake_df <- open_dataset(obt_result_dir) |>
          LONGITUDE) |> 
   distinct() |> 
   collect()
+
+lake_df |> 
+  mutate(SAMPLE_LOCATION = case_when(
+    SAMPLE_NAME %in% "bottom_sample"
+  ))
 
 lakes_l<-unique(lake_df$SITE_CODE)
 
@@ -453,8 +459,6 @@ mc_plot + ana_plot+ nod_plot +plot_layout(nrow = 1,ncol = 3,axis_titles = "colle
 
 
 ```
-
-
 
 ## Just toxins present overall and then by method (not by toxin species)
 
@@ -706,6 +710,7 @@ taxa_sum<-taxa_sum_cat|>
   group_by(SAMPLE_METHOD,RESULT_CATEGORY,is_cyano) |> 
   summarise(n = n())
 ```
+
 ## Map of sites with toxin detection status
 
 ```{r toxins-all-map ,message=FALSE,warning=FALSE}
@@ -796,7 +801,6 @@ ggsave("my_plot.png")
 
 
 ```
-
 
 ## Extent - Impacted Categories
 
@@ -1288,6 +1292,7 @@ library(patchwork)
 plot_extent_impaired +plot_risk + plot_attrib_risk +plot_layout(nrow = 1,ncol = 3,axis_titles = "collect",guides = "collect",axes = "collect")
 
 ```
+
 ## Drivers
 
 ```{r water chem and phab distributions}
@@ -1296,6 +1301,8 @@ plot_extent_impaired +plot_risk + plot_attrib_risk +plot_layout(nrow = 1,ncol = 
 water_chem <- open_dataset(obt_result_dir) |> 
   filter(WATERBODY_TYPE %in% "lake",
          PROJECT %in% "Lake Probability Sampling 2024-2025",
+         #Removing incorrectly classified sample
+         SAMPLE_NAME != "25L0116",
          SAMPLE_LOCATION %in% c("open_water","secchi_depth"),
          PARAMETER_NAME %in% c("ammonia", "phosphorus", "kjeldahl_nitrogen", "secchi_disk_depth", 
                                "nitrate_nitrite"),
@@ -1324,7 +1331,7 @@ water_chem<-water_chem |>
     PARAMETER_NAME %in% "phosphorus" & FRACTION %in% "total" ~ "total_phosphorus",
     PARAMETER_NAME %in% "phosphorus" & FRACTION %in% "dissolved" ~ "dissolved_phosphorus",
     .default = PARAMETER_NAME
-  ))
+  )) 
 
 phab_metrics_24 <- read_rds("L:/DOW/BWAM Share/data/data_warehouse_staging/2024_V3/raw_data/lake/phab/physical_habitat_results.rds")
 phab_metrics_25 <- read_rds("L:/DOW/BWAM Share/data/data_warehouse_staging/2025/lci/phab/physical_habitat_results.rds")
@@ -1360,7 +1367,7 @@ canopy_cover<-canopy_cover |>
   left_join(event_info_24_25)
   
 phab_metrics_short<-phab_metrics |> 
-  filter(PARAMETER_NAME %in% c("rdis_ix", "litripcvrqc3oe", "litcvrqc3oe", "rvegqc3oe")) |> 
+  filter(PARAMETER_NAME %in% c("rdis_ix", "litcvrqc3oe", "rvegqc3oe")) |> 
   select(
          SITE_CODE,
          PROJECT,
@@ -1388,36 +1395,155 @@ drivers<-drivers |>
     .default = RESULT_VALUE
   ))
 
-#Log transform phosphorus and nitrogen
-drivers<-drivers |>
-  mutate(RESULT_VALUE = case_when(
-   PARAMETER_NAME %in% c("ammonia", "total_phosphorus","dissolved_phosphorus","kjeldahl_nitrogen", "nitrate_nitrite") ~ log(RESULT_VALUE),
-   .default = RESULT_VALUE
+
+# Combine parameter_name and UNIT into a formatted label
+drivers <- drivers %>%
+  mutate(facet_label = paste0(PARAMETER_NAME, " (", UNIT, ")")) |> 
+  #rename some parameters
+  mutate(facet_label = case_when(
+    facet_label %in% "rdis_ix (index)" ~ "Lakeshore Human Disturbance index",
+    facet_label %in% "litcvrqc3oe (index)" ~ "Littoral Habitat complexity index",
+    facet_label %in% "rvegqc3oe (index)" ~ "Riparian vegetation complexity index",
+    facet_label %in% "litcvrqc3oe (index)" ~ "Littoral Habitat complexity index",
+    facet_label %in% "canopy_densiometer_percent (%)" ~ "Mean littoral canopy cover",
+    .default = facet_label
   ))
 
-
-# 1. Combine parameter_name and UNIT into a formatted label
-df_plot <- drivers %>%
-  mutate(facet_label = paste0(PARAMETER_NAME, " (", UNIT, ")"))
-
-# 2. Plot with free y-scales so each parameter's units make sense
-ggplot(df_plot, aes(x = any_detect, y = RESULT_VALUE, fill = any_detect)) +
+# Create the plot
+ggplot(drivers, aes(x = any_detect, y = RESULT_VALUE, fill = any_detect)) +
   geom_boxplot(alpha = 0.7, outlier.shape = NA) +
-  # Layer 3: Customize the categorical colors manually
   scale_fill_manual(
-    values = c("No" = "#154973", "Yes" = "#FACE00"), # Custom Hex codes for your values
-    name = "Toxins Detected"                         # Title for your map legend
+    values = c("No" = "#154973", "Yes" = "#FACE00"),
+    name = "Toxins Detected"                        
   ) +
   geom_jitter(width = 0.2, alpha = 0.4) +
-  facet_wrap(~ facet_label, scales = "free_y") +
+ 
+  # Clean facet headers
+  facet_wrap(~ facet_label, scales = "free_y", ncol = 3) +
+  
+  facetted_pos_scales(
+    y = list(
+      # FOR LOG PANELS: Guide handles the log compression lines perfectly inline
+      facet_label %in% c(
+        "ammonia (ug/L)", 
+        "kjeldahl_nitrogen (ug/L)", 
+        "nitrate_nitrite (ug/L)", 
+        "total_phosphorus (mg/L)", 
+        "dissolved_phosphorus (mg/L)"
+      ) ~ scale_y_log10(
+          labels = scales::label_comma(),
+          guide = "axis_logticks" 
+        ),
+      
+      # FOR LINEAR PANELS: Standard continuous scale remains completely clean
+      TRUE ~ scale_y_continuous()
+    )
+  ) +
+  
   labs(
-    x = "Any Detect",
-    y = "Result Value",
-    fill = "Any Detect",
-    title = "Parameter Distributions by Detect Status"
+    x = "Toxins Detected",
+    y = "Result Value"
+    #title = "Parameter Distributions by Detect Status"
   ) +
   theme_bw() +
-  theme(legend.position = "none") # Removes redundant legend if x-axis is already labeled
+  theme(
+    legend.position = "bottom",
+    
+    # FIX: Increase the font size and styling of the legend text
+    legend.title = element_text(face = "bold", size = 12), # Makes "Toxins Detected" larger
+    legend.text = element_text(size = 11),                 # Makes "Yes" / "No" larger
+    legend.key.size = unit(1.5, "lines"),                  # Makes the colored boxes larger
+    
+    # FIX: Bold and scale up the facet header titles
+    strip.text = element_text(face = "bold", size = 11),   # Bolds parameter titles
+    strip.background = element_rect(fill = "gray95"),      # Optional: subtle background tint
+    
+    # Controls the length/sizing of the log ticks cleanly via the theme
+    axis.ticks.length.y = unit(0.2, "cm") 
+  )
+
+
+
+
+```
+
+
+```{r, PCA}
+
+df_wide <- drivers %>%
+  select(SITE_CODE, any_detect, PARAMETER_NAME, RESULT_VALUE) %>% 
+  pivot_wider(names_from = PARAMETER_NAME, values_from = RESULT_VALUE) %>%
+  drop_na() # Removes missing values since PCA requires a complete matrix
+
+pca_meta <- df_wide %>% select(SITE_CODE, any_detect)
+pca_data <- df_wide %>% select(-SITE_CODE, -any_detect)
+
+# 2. Run PCA with scale and center enabled
+pca_results <- prcomp(pca_data, center = TRUE, scale. = TRUE)
+
+# 3. Extract PCA Coordinates for data points
+df_pca_plot <- as.data.frame(pca_results$x) %>%
+  bind_cols(pca_meta)
+
+# 4. Extract and scale the Loadings (Arrows)
+# We multiply by a scaling factor so the arrows stretch cleanly across the data space
+arrow_scale_factor <- max(abs(df_pca_plot$PC1)) / max(abs(pca_results$rotation[,1])) * 0.7
+
+df_loadings <- as.data.frame(pca_results$rotation) %>%
+  mutate(
+    parameter = rownames(.),
+    x_end = PC1 * arrow_scale_factor,
+    y_end = PC2 * arrow_scale_factor
+  )
+
+# 5. Calculate percentage variance explained for axis titles
+var_explained <- round(100 * (pca_results$sdev^2 / sum(pca_results$sdev^2)), 1)
+
+# 6. Plot the Biplot (Points + Arrows)
+ggplot() +
+  # Reference line grids
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray80") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray80") +
+  
+  # Layer A: The Data Points (drawn first so arrows stay on top)
+  geom_point(
+    data = df_pca_plot, 
+    aes(x = PC1, y = PC2, color = any_detect, fill = any_detect),
+    size = 3, alpha = 0.6, shape = 21, stroke = 1
+  ) +
+  scale_color_manual(values = c("No" = "#154973", "Yes" = "#FACE00"), name = "Toxins Detected") +
+  scale_fill_manual(values = c("No" = "#154973", "Yes" = "#FACE00"), name = "Toxins Detected") +
+  
+  # Layer B: The Loading Arrows
+  geom_segment(
+    data = df_loadings,
+    aes(x = 0, y = 0, xend = x_end, yend = y_end),
+    arrow = arrow(length = unit(0.2, "cm")),
+    color = "firebrick", linewidth = 0.8, alpha = 0.8
+  ) +
+  
+  # Layer C: The Parameter Labels
+  # vjust/hjust adjustments prevent text from drawing directly on top of the arrow head
+  geom_text(
+    data = df_loadings,
+    aes(x = x_end * 1.1, y = y_end * 1.1, label = parameter),
+    color = "black", fontface = "bold", size = 2.5, check_overlap = TRUE
+  ) +
+  
+  labs(
+    #title = "PCA Biplot of Water Parameters",
+    #subtitle = "Points colored by toxin detection status; Red arrows indicate parameter loadings",
+    x = paste0("PC1 (", var_explained[1], "% Variance Explained)"),
+    y = paste0("PC2 (", var_explained[2], "% Variance Explained)")
+  ) +
+  theme_bw() +
+  theme(
+    legend.position = "bottom",
+    legend.title = element_text(face = "bold", size = 12),
+    legend.text = element_text(size = 11),
+    plot.title = element_text(face = "bold", size = 14)
+  )+
+  scale_x_continuous(expand = expansion(mult = c(0.2, 0.2)))
 
 
 ```
