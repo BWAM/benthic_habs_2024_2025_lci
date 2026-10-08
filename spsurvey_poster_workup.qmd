@@ -49,6 +49,17 @@ my_palette4 <- list(
   primary = c("#154973","#233F2B","#FACE00","#7E9084")
 )
 
+my_palette4_thresh <- list(
+  primary = c("#FACE00","#154973","#233F2B","#7E9084")
+)
+
+my_palette4_thresh <- list(
+  primary = c("#FACE00","#154973","#233F2B","#7E9084")
+)
+
+my_p1_thresh <- list(
+  primary = c("#7E9084","#FACE00")
+)
 # Create a discrete scale function
 my_scale_colour <- function(...) {
   ggplot2::discrete_scale(
@@ -634,6 +645,69 @@ scrape_plot_means
 ids_plot_means + scrape_plot_means +plot_layout(ncol = 2, nrow = 1, axes = "collect",guides = "collect", axis_titles = "collect")
 
 ```
+#NYS thresholds
+
+```{r}
+#first create the categories - above the thresholds, below or not sampled mc is 4 ug/l (NYS), cylindro is 15 ug/l (EPA)
+toxins_nys_thresholds<-toxins.sf |> #first put the non-detects to 0 so they get sorted
+  filter(PARAMETER_NAME %in% c("microcystin","cylindrospermopsin")) |> 
+  mutate(nys_threshold_m = case_when(
+    (PARAMETER_NAME %in% "microcystin" & RESULT_VALUE > 4)~"above",
+    (PARAMETER_NAME %in% "microcystin" & RESULT_VALUE <= 4) ~ "below",
+     (PARAMETER_NAME %in% "microcystin" & RESULT_QUALIFIER %in% "U") ~ "below",
+    TRUE~"not_sampled"),
+    nys_threshold_c =  case_when(
+    (PARAMETER_NAME %in% "cylindrospermopsin" & RESULT_VALUE > 15)~"above",
+    (PARAMETER_NAME %in% "cylindrospermopsin" & RESULT_VALUE <= 15) ~ "below",
+    (PARAMETER_NAME %in% "cylindrospermopsin" & RESULT_QUALIFIER %in% "U") ~ "below",
+    TRUE~"not_sampled"))
+
+#filter to the correct parameters
+thresh_m_df<-toxins_nys_thresholds |> 
+  filter(PARAMETER_NAME %in% "microcystin")
+
+thresh_c_df<-toxins_nys_thresholds |> 
+  filter(PARAMETER_NAME %in% "cylindrospermopsin")
+
+
+  #run the spsurvey data
+cat_thresh_m<-standard_ests<-spsurvey::cat_analysis(
+  dframe = thresh_m_df,
+  vars = "nys_threshold_m",
+  subpops = "SAMPLE_METHOD",
+  siteID = "SITE_CODE",
+  weight = "final_weight"
+)
+
+ #run the spsurvey data
+cat_thresh_c<-standard_ests<-spsurvey::cat_analysis(
+  dframe = thresh_c_df,
+  vars = "nys_threshold_c",
+  subpops = "SAMPLE_METHOD",
+  siteID = "SITE_CODE",
+  weight = "final_weight"
+)
+
+#filter out the "total" category
+
+cat_thresh_m<-cat_thresh_m |> 
+  filter(Category !="Total")
+cat_thresh_c<-cat_thresh_c |> 
+  filter(Category !="Total")
+
+#plot them
+thresh_m_plot<- plot_cat_analysis(df = cat_thresh_m,
+                                  param = "Microcystin Estimates above 4ug/l",
+                                  col_pallete = my_palette4_thresh$primary)
+thresh_m_plot
+
+#plot them
+thresh_c_plot<- plot_cat_analysis(df = cat_thresh_c,
+                                  param = "cylindrospermopsin",
+                                  col_pallete = my_p1_thresh$primary)
+thresh_c_plot
+```
+
 
 ## species - cat analysis
 
