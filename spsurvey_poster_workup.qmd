@@ -5,7 +5,7 @@ format:
     embed-resources: true
     self-contained-math: true
 params:
-  user: mpkraft
+  user: kareynol
 editor: visual
 execute:
   echo: false 
@@ -219,10 +219,10 @@ lake_df <- open_dataset(obt_result_dir) |>
   distinct() |> 
   collect()
 
-lake_df |> 
-  mutate(SAMPLE_LOCATION = case_when(
-    SAMPLE_NAME %in% "bottom_sample"
-  ))
+# lake_df |> 
+#   mutate(SAMPLE_LOCATION = case_when(
+#     SAMPLE_NAME %in% "bottom_sample"
+#   ))
 
 lakes_l<-unique(lake_df$SITE_CODE)
 
