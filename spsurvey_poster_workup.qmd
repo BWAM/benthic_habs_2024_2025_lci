@@ -209,6 +209,7 @@ lake_df <- open_dataset(obt_result_dir) |>
          EVENT_ID,
          EVENT_DATETIME,
          FRACTION,
+         SAMPLE_NAME,
          SAMPLE_LOCATION,
          PARAMETER_NAME,
          RESULT_VALUE,
@@ -221,7 +222,8 @@ lake_df <- open_dataset(obt_result_dir) |>
 
 lake_df |> 
   mutate(SAMPLE_LOCATION = case_when(
-    SAMPLE_NAME %in% "bottom_sample"
+    SAMPLE_NAME %in% "25L0116" ~ "bottom_sample",
+    .default = SAMPLE_LOCATION
   ))
 
 lakes_l<-unique(lake_df$SITE_CODE)
@@ -376,7 +378,7 @@ toxins_spsurvey<-toxins2 |>
                                   TRUE ~ RESULT_VALUE)) |> 
   mutate(present = case_when(RESULT_VALUE > 0 ~ "present",
                              TRUE ~ "non-detect" )) |> 
-  filter(!SAMPLE_METHOD %in% c("van_dorn","vinyl_tube","grab"))
+  filter(SAMPLE_METHOD %in% c("integrated_disturbance_sample", "scrape", "floating_mat"))
 
 
 # Complete the dataset - so there is aline for each parameter and each method
@@ -1295,7 +1297,7 @@ plot_extent_impaired +plot_risk + plot_attrib_risk +plot_layout(nrow = 1,ncol = 
 
 ## Drivers
 
-```{r water chem and phab distributions}
+```{r water chem and phab distributions any detections}
 
 # All lake data
 water_chem <- open_dataset(obt_result_dir) |> 
@@ -1466,6 +1468,12 @@ ggplot(drivers, aes(x = any_detect, y = RESULT_VALUE, fill = any_detect)) +
 
 
 ```
+
+```{r water chem and phab distributions detections by sample type }
+
+
+```
+
 
 
 ```{r, PCA}
