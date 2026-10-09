@@ -149,7 +149,7 @@ plot<-ggplot2::ggplot(df, aes(fill=Category, y=Estimate.P, x = Subpopulation)) +
                 width=.2,                    # Width of the error bars
                 position = position_dodge(width = 0.9),
                 alpha = 0.1)+
-geom_text(aes(label = paste(Estimate.P_clean,"%",sep = "")), position = position_dodge(width = 1),vjust = -0.1)+
+geom_text(aes(label = paste(Estimate.P_clean,"%",sep = "")), position = position_dodge(width = 1),vjust = 0.1)+
   coord_flip()+ggtitle(label = paste(stringr::str_to_title(param),sep = " "))+
   theme(legend.position = "none")+
   scale_x_discrete(limits = rev)+
@@ -344,6 +344,88 @@ sites_wgts<-final_site_list |>
 ```
 
 ## Bring in the toxin data - as of 8/27 toxins are not in WQMA yet
+#also added for missing eurofins data
+
+
+```{r mising-eurofins-data}
+
+library(readxl)
+folder_path <- here::here("data/missing_eurofins_data")
+
+xls_files <- list.files(path = folder_path, pattern = "\\.xls$", full.names = TRUE)
+
+# Read all files and combine into one data frame
+missing_euro <- do.call(
+  rbind,
+  lapply(xls_files, function(file) {
+    tryCatch({
+      # Read first sheet; adjust 'sheet' if needed
+      df <- readxl::read_excel(file, sheet = 1)
+      df$SourceFile <- basename(file)  # Add column to track source
+      df
+    }, error = function(e) {
+      warning(sprintf("Error reading file %s: %s", file, e$message))
+      NULL
+    })
+  }))
+
+
+#format to add in
+
+missing_euro_fix<-missing_euro |> 
+  filter(`Sample Type` %in% 'Field Sample') |> 
+  select(SAMPLE_NAME =`Client ID`,
+         EVENT_DATETIME = Collected,
+         RESULT_VALUE = Result,
+         RESULT_QUALIFIER = `Result Flag`,
+         UNIT = Units,
+         PARAMETER_NAME = Analyte,
+         MRL
+         ) |> 
+  mutate(SAMPLE_NAME = substr(SAMPLE_NAME, nchar(SAMPLE_NAME) - 7, nchar(SAMPLE_NAME)))
+  
+
+#bring in the lake ids for these - 
+key<-read.csv("L:/DOW/BWAM Share/data/habs/2025/LCI_HABs_Data/combined.key.files.csv")
+
+key_short<-key |> 
+  select(SAMPLE_NAME = Key,SITE_CODE = Site.ID,SAMPLE_METHOD = Info.Type) |> 
+  distinct() |> 
+  mutate(SAMPLE_METHOD = case_match(SAMPLE_METHOD,
+                                   "IDS" ~ "integrated_disturbance_sample",
+                                   "SCRP" ~"scrape",
+                                   "MAT"  ~ "floating_mat",
+                                   .default = SAMPLE_METHOD))
+
+
+#rename the parameters
+missing_euro_fix2<-missing_euro_fix |> 
+  mutate(SAMPLE_NAME = gsub(" ", "", SAMPLE_NAME)) |>  #remove leading spaces to join
+  left_join(key_short,
+            by = "SAMPLE_NAME") |> 
+  mutate(PARAMETER_NAME = case_match(PARAMETER_NAME,
+                                   "Anatoxin-a" ~"anatoxin_a", 
+                                   "Cylindrospermopsin"~ "cylindrospermopsin",
+                                   "Microcystin-LA" ~ "microcystin_la",
+                                   "Microcystin-LF" ~ "microcystin_lf" ,
+                                   "Microcystin-LR"~ "microcystin_lr",
+                                   "Microcystin-LY"~"microcystin_ly" ,
+                                   "Microcystin-RR"~"microcystin_rr" ,
+                                   "Microcystin-YR" ~"microcystin_yr",
+                                   "Nodularin"  ~ "nodularin",
+                                   .default = PARAMETER_NAME)) |> 
+  mutate(EVENT_DATETIME = as.Date(EVENT_DATETIME,"%M/%d/%Y")) |> 
+  mutate(RESULT_QUALIFIER = case_when(
+    RESULT_VALUE == MRL ~ "U",
+    TRUE ~ RESULT_QUALIFIER
+  ))
+
+#read in the non-detecs
+non_detects <- read_csv(here::here("data/missing_eurofins_data/non-detects.csv"))
+
+missing_euro_fix3<-rbind(missing_euro_fix2, non_detects)
+
+```
 
 ```{r bring-in-data,message = FALSE, warning = FALSE}
 
@@ -351,6 +433,10 @@ toxins_24 <- readRDS("L:/DOW/BWAM Share/data/data_warehouse_staging/2025/2024_20
 toxins_25<-readRDS("L:/DOW/BWAM Share/data/data_warehouse_staging/2025/2024_2025_benthic_habs/2025_benthic_data.rds")
 
 toxins<-rbind(toxins_24,toxins_25)
+
+#add missing eurofins
+
+toxins_full<-plyr::rbind.fill(toxins,missing_euro_fix3)
 
 toxins<-toxins |> 
   select(EVENT_DATETIME,SITE_CODE,SAMPLE_METHOD,PARAMETER_NAME,UNIT,
@@ -454,6 +540,7 @@ nod_plot<-plot_cat_analysis(df = nod, param = "nodularin", col_pallete = my_pale
 nod_plot
 
 ana<-cat_analysis_function(df = toxins.sf, param = "anatoxin_a")
+
 ana_plot<-plot_cat_analysis(df = ana, param = "anatoxin_a", col_pallete = my_palette$primary)
 ana_plot
 
@@ -1497,7 +1584,7 @@ ggplot(drivers, aes(x = any_detect, y = RESULT_VALUE, fill = any_detect)) +
   # Clean facet headers
   facet_wrap(~ facet_label, scales = "free_y", ncol = 3) +
   
-  facetted_pos_scales(
+  ggh4x::facetted_pos_scales(
     y = list(
       # FOR LOG PANELS: Guide handles the log compression lines perfectly inline
       facet_label %in% c(
