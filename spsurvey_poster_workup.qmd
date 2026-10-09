@@ -438,7 +438,7 @@ toxins<-rbind(toxins_24,toxins_25)
 
 toxins_full<-plyr::rbind.fill(toxins,missing_euro_fix3)
 
-toxins<-toxins |> 
+toxins<-toxins_full |> 
   select(EVENT_DATETIME,SITE_CODE,SAMPLE_METHOD,PARAMETER_NAME,UNIT,
          RESULT_VALUE,RESULT_QUALIFIER,RESULT_QUALIFIER_NOTE,
          SAMPLE_LATITUDE,SAMPLE_LONGITUDE) |> 
