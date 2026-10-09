@@ -471,6 +471,7 @@ parameter_list<-c("anatoxin_a",                                       "cylindros
 
 
 toxins_spsurvey<-toxins2 |> 
+  mutate(RESULT_VALUE = as.numeric(RESULT_VALUE)) |> 
   mutate(RESULT_VALUE = case_when(RESULT_QUALIFIER %in% "U"~ 0,
                                   TRUE ~ RESULT_VALUE)) |> 
   mutate(present = case_when(RESULT_VALUE > 0 ~ "present",
