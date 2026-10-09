@@ -337,7 +337,7 @@ final_site_list<-prob_1_adjusted |>
   distinct()
 
 sites_wgts<-final_site_list |> 
-  select(LOCATION_ID,Lake,final_weight) |> 
+  select(LOCATION_ID,Lake,final_weight,lat_WGS84,lon_WGS84) |> 
   distinct() |> 
   rename(SITE_CODE = LOCATION_ID)
 
@@ -446,7 +446,12 @@ toxins<-toxins_full |>
 
 toxins2<-toxins |> 
   left_join(sites_wgts) |> 
-  filter(!is.na(final_weight)) #take out ones that were not part of the design (maybe CSLAP?) all 82 of the plan match so that's good
+  filter(!is.na(final_weight)) |> 
+  mutate(SAMPLE_LATITUDE = case_when(is.na(SAMPLE_LATITUDE) ~ lat_WGS84,
+                                           TRUE~SAMPLE_LATITUDE)) |> 
+  mutate(SAMPLE_LONGITUDE = case_when(is.na(SAMPLE_LONGITUDE) ~ lat_WGS84,
+                                           TRUE~SAMPLE_LONGITUDE)) 
+  #take out ones that were not part of the design (maybe CSLAP?) all 82 of the plan match so that's good
 
 others<-toxins |> 
   left_join(sites_wgts) |> 
