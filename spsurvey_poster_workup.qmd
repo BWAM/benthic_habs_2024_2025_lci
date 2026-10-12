@@ -5,7 +5,7 @@ format:
     embed-resources: true
     self-contained-math: true
 params:
-  user: kareynol
+  user: mpkraft
 editor: visual
 execute:
   echo: false 
@@ -29,6 +29,7 @@ library(rnaturalearth)
 library(rnaturalearthdata)
 library(readr)
 library(tidyverse)
+library(ggh4x)
 
 
 
@@ -181,14 +182,22 @@ combo_plan<-rbind(plan_25,plan_24)
 
 combo_plan_short<-combo_plan |> 
   select(TYPE,Project,rank,LOCATION_ID,Lake) |> 
-  mutate(siteID = rank)
+  mutate(siteID = rank) |> 
+  #Fix site code for La Salle Lake
+  mutate(LOCATION_ID = case_when(
+    LOCATION_ID %in% "0102LA5022_DH" ~ "0102LAS5022_DH",
+    .default = LOCATION_ID
+  ))
 
 wgts_merge<-left_join(wgts,combo_plan_short,
                   by = "siteID")
 
 wgts_merge2<-wgts_merge |> #create the EvalStatus field for if it was sampled - TS
-  mutate(EvalStatus = case_when(Lake %in% "0903LOW0155_Lows Lake" ~ "PB",
-                                !is.na(rank) ~ "TS", #physical barrier
+  mutate(EvalStatus = case_when(Lake %in% "0903LOW0155_Lows Lake" ~ "PB", #physical barrier
+                                Lake %in% "1301UWBXXX6_DH" ~ "MS", # Missing toxins and microscopy
+    Lake %in% "1303BEA0234_DH" ~ "MS", # Benthics not sampled, Alene lost her phone in lake
+    Lake %in% "0503TANXXX1_DH" ~ "MS", # Benthics not sampled, staff didn't feel safe due to severe open water HAB
+                                !is.na(rank) ~ "TS", 
                                 TRUE ~ "NN")) #not needed
 
 
@@ -243,6 +252,8 @@ wgts_merge3<-wgts_merge2 |>
   mutate(EvalStatus = case_when(
     Lake %in% "0903LOW0155_Lows Lake" ~ "PB",
     Lake %in% "1301UWBXXX6_DH" ~ "MS", # Missing toxins and microscopy
+    Lake %in% "1303BEA0234_DH" ~ "MS", # Benthics not sampled, Alene lost her phone in lake
+    Lake %in% "0503TANXXX1_DH" ~ "MS", # Benthics not sampled, staff didn't feel safe due to severe open water HAB
     LOCATION_ID %in% lakes_l ~ "TS",
     TRUE ~ "NN"
   ))
@@ -423,7 +434,19 @@ missing_euro_fix2<-missing_euro_fix |>
 #read in the non-detecs
 non_detects <- read_csv(here::here("data/missing_eurofins_data/non-detects.csv"))
 
-missing_euro_fix3<-rbind(missing_euro_fix2, non_detects)
+missing_euro_fix3<-rbind(missing_euro_fix2, non_detects) |> 
+  mutate(PARAMETER_NAME = case_match(PARAMETER_NAME,
+                                   "Anatoxin-a" ~"anatoxin_a", 
+                                   "Cylindrospermopsin"~ "cylindrospermopsin",
+                                   "Microcystin-LA" ~ "microcystin_la",
+                                   "Microcystin-LF" ~ "microcystin_lf" ,
+                                   "Microcystin-LR"~ "microcystin_lr",
+                                   "Microcystin-LY"~"microcystin_ly" ,
+                                   "Microcystin-RR"~"microcystin_rr" ,
+                                   "Microcystin-YR" ~"microcystin_yr",
+                                   "Nodularin"  ~ "nodularin",
+                                   .default = PARAMETER_NAME))
+  
 
 ```
 
@@ -433,6 +456,14 @@ toxins_24 <- readRDS("L:/DOW/BWAM Share/data/data_warehouse_staging/2025/2024_20
 toxins_25<-readRDS("L:/DOW/BWAM Share/data/data_warehouse_staging/2025/2024_2025_benthic_habs/2025_benthic_data.rds")
 
 toxins<-rbind(toxins_24,toxins_25)
+
+#Fix SITE_CODE for La Salle Lake
+toxins<-toxins |> 
+  mutate(SITE_CODE = case_when(
+    SITE_CODE %in% "0102LA5022_DH" ~ "0102LAS5022_DH",
+    .default = SITE_CODE
+  )) |> 
+  filter(SAMPLE_METHOD %in% c("integrated_disturbance_sample", "scrape", "floating_mat"))
 
 #add missing eurofins
 
@@ -447,9 +478,14 @@ toxins<-toxins_full |>
 toxins2<-toxins |> 
   left_join(sites_wgts) |> 
   filter(!is.na(final_weight)) |> 
+  #Add in lat/long to missing Eurofins samples if already present
+  group_by(SITE_CODE) |> 
+  fill(SAMPLE_LATITUDE, .direction = "downup") |>
+    fill(SAMPLE_LONGITUDE, .direction = "downup") |>
+  ungroup() |> 
   mutate(SAMPLE_LATITUDE = case_when(is.na(SAMPLE_LATITUDE) ~ lat_WGS84,
                                            TRUE~SAMPLE_LATITUDE)) |> 
-  mutate(SAMPLE_LONGITUDE = case_when(is.na(SAMPLE_LONGITUDE) ~ lat_WGS84,
+  mutate(SAMPLE_LONGITUDE = case_when(is.na(SAMPLE_LONGITUDE) ~ lon_WGS84,
                                            TRUE~SAMPLE_LONGITUDE)) 
   #take out ones that were not part of the design (maybe CSLAP?) all 82 of the plan match so that's good
 
@@ -807,6 +843,14 @@ thresh_c_plot
 ```{r, message = FALSE, warning = FALSE}
 
 microscopy_24<-read.csv(here::here("data/microscopy_2024.csv"))
+
+microscopy_24<-microscopy_24 |> 
+  #fix site code for La Salle Lake
+   mutate(SITE_CODE = case_when(
+    SITE_CODE %in% "0102LA5022_DH" ~ "0102LAS5022_DH",
+    .default = SITE_CODE
+  ))
+
 microscopy_25<-read.csv(here::here("data/microscopy_2025.csv"))
 
 
@@ -1473,7 +1517,8 @@ water_chem <- open_dataset(obt_result_dir) |>
          #Removing incorrectly classified sample
          SAMPLE_NAME != "25L0116",
          SAMPLE_LOCATION %in% c("open_water","secchi_depth"),
-         PARAMETER_NAME %in% c("ammonia", "phosphorus", "kjeldahl_nitrogen", "secchi_disk_depth", 
+         PARAMETER_NAME %in% c("ammonia", "phosphorus", "chlorophyll-a", 
+                               "kjeldahl_nitrogen", "secchi_disk_depth", 
                                "nitrate_nitrite"),
          between(EVENT_DATETIME, # 2.2
                  left = lubridate::ymd("2024-01-01"),
@@ -1598,7 +1643,8 @@ ggplot(drivers, aes(x = any_detect, y = RESULT_VALUE, fill = any_detect)) +
         "kjeldahl_nitrogen (ug/L)", 
         "nitrate_nitrite (ug/L)", 
         "total_phosphorus (mg/L)", 
-        "dissolved_phosphorus (mg/L)"
+        "dissolved_phosphorus (mg/L)",
+        "chlorophyll-a (ug/L)" 
       ) ~ scale_y_log10(
           labels = scales::label_comma(),
           guide = "axis_logticks" 
@@ -1638,6 +1684,94 @@ ggplot(drivers, aes(x = any_detect, y = RESULT_VALUE, fill = any_detect)) +
 
 ```{r water chem and phab distributions detections by sample type }
 
+toxins_scrape <- toxins2 %>%
+  filter(PARAMETER_NAME %in% parameter_list) |>
+  filter(SAMPLE_METHOD %in% "scrape") |> 
+  group_by(SITE_CODE) %>%
+  summarize(
+    any_detect = if_else(any(!is.na(RESULT_VALUE)), "Yes", "No")
+  ) |> 
+  distinct(SITE_CODE, any_detect)
+
+drivers_scrapes<-toxins_scrape |> 
+  left_join(water_chem_phab)
+
+#Change non-detects to half detection limit
+drivers_scrapes<-drivers_scrapes |> 
+  mutate(RESULT_VALUE = case_when(
+    is.na(RESULT_VALUE) ~ 0.5*METHOD_DETECTION_LIMIT, 
+    .default = RESULT_VALUE
+  ))
+
+
+# Combine parameter_name and UNIT into a formatted label
+drivers_scrapes <- drivers_scrapes %>%
+  mutate(facet_label = paste0(PARAMETER_NAME, " (", UNIT, ")")) |> 
+  #rename some parameters
+  mutate(facet_label = case_when(
+    facet_label %in% "rdis_ix (index)" ~ "Lakeshore Human Disturbance index",
+    facet_label %in% "litcvrqc3oe (index)" ~ "Littoral Habitat complexity index",
+    facet_label %in% "rvegqc3oe (index)" ~ "Riparian vegetation complexity index",
+    facet_label %in% "litcvrqc3oe (index)" ~ "Littoral Habitat complexity index",
+    facet_label %in% "canopy_densiometer_percent (%)" ~ "Mean littoral canopy cover",
+    .default = facet_label
+  ))
+
+# Create the plot
+ggplot(drivers_scrapes, aes(x = any_detect, y = RESULT_VALUE, fill = any_detect)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = NA) +
+  scale_fill_manual(
+    values = c("No" = "#154973", "Yes" = "#FACE00"),
+    name = "Toxins Detected"                        
+  ) +
+  geom_jitter(width = 0.2, alpha = 0.4) +
+ 
+  # Clean facet headers
+  facet_wrap(~ facet_label, scales = "free_y", ncol = 3) +
+  
+  ggh4x::facetted_pos_scales(
+    y = list(
+      # FOR LOG PANELS: Guide handles the log compression lines perfectly inline
+      facet_label %in% c(
+        "ammonia (ug/L)", 
+        "kjeldahl_nitrogen (ug/L)", 
+        "nitrate_nitrite (ug/L)", 
+        "total_phosphorus (mg/L)", 
+        "dissolved_phosphorus (mg/L)",
+        "chlorophyll-a (ug/L)" 
+      ) ~ scale_y_log10(
+          labels = scales::label_comma(),
+          guide = "axis_logticks" 
+        ),
+      
+      # FOR LINEAR PANELS: Standard continuous scale remains completely clean
+      TRUE ~ scale_y_continuous()
+    )
+  ) +
+  
+  labs(
+    x = "Toxins Detected",
+    y = "Result Value"
+    #title = "Parameter Distributions by Detect Status"
+  ) +
+  theme_bw() +
+  theme(
+    legend.position = "bottom",
+    
+    # FIX: Increase the font size and styling of the legend text
+    legend.title = element_text(face = "bold", size = 12), # Makes "Toxins Detected" larger
+    legend.text = element_text(size = 11),                 # Makes "Yes" / "No" larger
+    legend.key.size = unit(1.5, "lines"),                  # Makes the colored boxes larger
+    
+    # FIX: Bold and scale up the facet header titles
+    strip.text = element_text(face = "bold", size = 11),   # Bolds parameter titles
+    strip.background = element_rect(fill = "gray95"),      # Optional: subtle background tint
+    
+    # Controls the length/sizing of the log ticks cleanly via the theme
+    axis.ticks.length.y = unit(0.2, "cm") 
+  )
+
+
 
 ```
 
@@ -1646,12 +1780,12 @@ ggplot(drivers, aes(x = any_detect, y = RESULT_VALUE, fill = any_detect)) +
 ```{r, PCA}
 
 df_wide <- drivers %>%
-  select(SITE_CODE, any_detect, PARAMETER_NAME, RESULT_VALUE) %>% 
+  select(SITE_CODE, any_detect, cyano_present, PARAMETER_NAME, RESULT_VALUE) %>% 
   pivot_wider(names_from = PARAMETER_NAME, values_from = RESULT_VALUE) %>%
   drop_na() # Removes missing values since PCA requires a complete matrix
 
-pca_meta <- df_wide %>% select(SITE_CODE, any_detect)
-pca_data <- df_wide %>% select(-SITE_CODE, -any_detect)
+pca_meta <- df_wide %>% select(SITE_CODE, any_detect, cyano_present)
+pca_data <- df_wide %>% select(-SITE_CODE, -any_detect, -cyano_present)
 
 # 2. Run PCA with scale and center enabled
 pca_results <- prcomp(pca_data, center = TRUE, scale. = TRUE)
@@ -1683,12 +1817,15 @@ ggplot() +
   # Layer A: The Data Points (drawn first so arrows stay on top)
   geom_point(
     data = df_pca_plot, 
-    aes(x = PC1, y = PC2, color = any_detect, fill = any_detect),
-    size = 3, alpha = 0.6, shape = 21, stroke = 1
+    aes(x = PC1, y = PC2, color = any_detect, fill = any_detect, shape = cyano_present),
+    size = 3, alpha = 0.6, stroke = 1
   ) +
   scale_color_manual(values = c("No" = "#154973", "Yes" = "#FACE00"), name = "Toxins Detected") +
   scale_fill_manual(values = c("No" = "#154973", "Yes" = "#FACE00"), name = "Toxins Detected") +
-  
+ scale_shape_manual(
+    name = "Cyanos Present",
+    values = c("Yes" = 16, "No" = 17) # 16 = Filled Circle, 17 = Filled Triangle
+  ) +
   # Layer B: The Loading Arrows
   geom_segment(
     data = df_loadings,
@@ -1719,6 +1856,38 @@ ggplot() +
     plot.title = element_text(face = "bold", size = 14)
   )+
   scale_x_continuous(expand = expansion(mult = c(0.2, 0.2)))
+
+
+```
+```{r random forest}
+df_wide_complete<-df_wide |> 
+  na.omit() |> 
+  rename(chlorophyll_a = `chlorophyll-a`)
+
+rf_fit<-ranger(
+  formula = as.factor(any_detect) ~ ammonia+kjeldahl_nitrogen + chlorophyll_a+        
+ nitrate_nitrite+total_phosphorus+dissolved_phosphorus+secchi_disk_depth+
+   rdis_ix+rvegqc3oe+litcvrqc3oe+canopy_densiometer_percent,
+  data = df_wide_complete, 
+  importance = "permutation",
+  probability = TRUE
+)
+
+print(rf_fit)
+
+imp<-as.data.frame(importance(rf_fit))
+
+df_results <- df_wide_complete %>%
+  mutate(
+    pred_prob_yes = rf_fit$predictions[, "Yes"],
+    predicted_class = ifelse(pred_prob_yes > 0.5, "Yes", "No")
+  ) %>%
+  select(SITE_CODE, any_detect, pred_prob_yes, predicted_class) |> 
+  mutate(prediction_true = case_when(
+    any_detect == predicted_class ~ TRUE,
+    any_detect != predicted_class ~ FALSE
+  ))
+
 
 
 ```
