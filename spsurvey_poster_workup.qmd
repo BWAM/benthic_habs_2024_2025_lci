@@ -30,7 +30,7 @@ library(rnaturalearthdata)
 library(readr)
 library(tidyverse)
 library(ggh4x)
-
+library(ggrepel)
 
 
 #plotting function
@@ -40,6 +40,10 @@ library(ggh4x)
 # Define your palette
 my_palette <- list(
   primary = c("#154973","#233F2B","#FACE00")
+)
+
+my_palette1 <- list(
+  primary = c("#233F2B","#154973","#FACE00")
 )
 
 my_palette2 <- list(
@@ -72,7 +76,7 @@ my_scale_colour <- function(...) {
 
 plot_standard_ests<-function(df,title,ylab,xlab,col_pallete){
   
-  df$Estimate.P_clean<-round(df$Estimate.P, digits = 2)
+  df$Estimate.P_clean<-round(df$Estimate.P, digits = 1)
   
   plot<-ggplot2::ggplot(df, aes(x=factor(df$Subpopulation), y=df$Estimate.P,alpha = 0.5)) +
   geom_bar(stat="identity",aes(fill=df$Subpopulation)) +
@@ -134,7 +138,7 @@ attrib_risk_spsurvey<-function(df,stressor,response){
 
 plot_cat_analysis<-function(df,param,col_pallete){
  
-  df$Estimate.P_clean<-round(df$Estimate.P, digits = 2)
+  df$Estimate.P_clean<-round(df$Estimate.P, digits = 1)
   
 plot<-ggplot2::ggplot(df, aes(fill=Category, y=Estimate.P, x = Subpopulation)) +
   geom_bar(position='dodge', stat='identity',alpha = 0.6) +
@@ -150,13 +154,18 @@ plot<-ggplot2::ggplot(df, aes(fill=Category, y=Estimate.P, x = Subpopulation)) +
                 width=.2,                    # Width of the error bars
                 position = position_dodge(width = 0.9),
                 alpha = 0.1)+
-geom_text(aes(label = paste(Estimate.P_clean,"%",sep = "")), position = position_dodge(width = 1),vjust = 0.1)+
+geom_text(aes(label = paste(Estimate.P_clean,"%",sep = "")), position = position_dodge(width = 1),hjust = -0.1)+
+  scale_y_continuous(expand = expansion(mult = c(0, 0.10)))+
   coord_flip()+ggtitle(label = paste(stringr::str_to_title(param),sep = " "))+
   theme(legend.position = "none")+
-  scale_x_discrete(limits = rev)+
+  # scale_x_discrete(limits = rev)+
   labs(y = "Estimated % of Lakes in NYS",
        x = "Sample Type")+
-  theme_minimal()
+  theme_light()+
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  )
 plot
 }
 
@@ -393,8 +402,23 @@ missing_euro_fix<-missing_euro |>
          PARAMETER_NAME = Analyte,
          MRL
          ) |> 
-  mutate(SAMPLE_NAME = substr(SAMPLE_NAME, nchar(SAMPLE_NAME) - 7, nchar(SAMPLE_NAME)))
-  
+  mutate(SAMPLE_NAME = substr(SAMPLE_NAME, nchar(SAMPLE_NAME) - 7, nchar(SAMPLE_NAME))) |> 
+  #Fix wrong sample key from lab
+  mutate(SAMPLE_NAME = case_when(
+    SAMPLE_NAME %in% "25L0383" ~ "25L0384",
+    str_detect(SAMPLE_NAME, "25S") ~ str_replace_all(SAMPLE_NAME, "25S", "25L"),
+    .default = SAMPLE_NAME
+  )) |> 
+  #Set result values to NA when qualifier = "<"
+  mutate(RESULT_VALUE = case_when(
+    RESULT_QUALIFIER == "<" ~ NA,
+    .default = RESULT_VALUE
+  )) |> 
+  mutate(RESULT_QUALIFIER = case_when(
+    RESULT_QUALIFIER == "=" ~ "A",
+    RESULT_QUALIFIER == "<" ~ "U",
+    .default = RESULT_QUALIFIER
+  ))
 
 #bring in the lake ids for these - 
 key<-read.csv("L:/DOW/BWAM Share/data/habs/2025/LCI_HABs_Data/combined.key.files.csv")
@@ -425,11 +449,7 @@ missing_euro_fix2<-missing_euro_fix |>
                                    "Microcystin-YR" ~"microcystin_yr",
                                    "Nodularin"  ~ "nodularin",
                                    .default = PARAMETER_NAME)) |> 
-  mutate(EVENT_DATETIME = as.Date(EVENT_DATETIME,"%M/%d/%Y")) |> 
-  mutate(RESULT_QUALIFIER = case_when(
-    RESULT_VALUE == MRL ~ "U",
-    TRUE ~ RESULT_QUALIFIER
-  ))
+  mutate(EVENT_DATETIME = as.Date(EVENT_DATETIME,"%M/%d/%Y")) 
 
 #read in the non-detecs
 non_detects <- read_csv(here::here("data/missing_eurofins_data/non-detects.csv"))
@@ -513,7 +533,7 @@ parameter_list<-c("anatoxin_a",                                       "cylindros
 
 toxins_spsurvey<-toxins2 |> 
   mutate(RESULT_VALUE = as.numeric(RESULT_VALUE)) |> 
-  mutate(RESULT_VALUE = case_when(RESULT_QUALIFIER %in% "U"~ 0,
+  mutate(RESULT_VALUE = case_when(str_detect(RESULT_QUALIFIER, "U")~ 0,
                                   TRUE ~ RESULT_VALUE)) |> 
   mutate(present = case_when(RESULT_VALUE > 0 ~ "present",
                              TRUE ~ "non-detect" )) |> 
@@ -528,7 +548,7 @@ df_completed <- toxins_spsurvey |>
     PARAMETER_NAME = parameter_list,
     fill      = list(RESULT_VALUE = as.numeric(NA)  # or "not sampled" if it's text
   )) |> 
-  mutate(present = case_when(SAMPLE_METHOD %in% "floating_mat" & is.na(RESULT_VALUE)~"not_observed",
+  mutate(present = case_when(SAMPLE_METHOD %in% "floating_mat" & is.na(RESULT_VALUE)~"not_sampled",
                              TRUE ~ present)) |> 
   select(-c(SAMPLE_LATITUDE,SAMPLE_LONGITUDE,final_weight))
 
@@ -573,21 +593,36 @@ standard_ests<-standard_ests %>%
   filter(Category != "Total")
 }
 
-mc<-cat_analysis_function(df = toxins.sf, param = "microcystin")
-mc_plot<-plot_cat_analysis(df = mc, param = "microcystin", col_pallete = my_palette$primary)
+
+mc<-cat_analysis_function(df = toxins.sf, param = "microcystin") |>
+   mutate(Category = fct_relevel(Category, "not_sampled", "non-detect", "present"))
+  
+mc_plot<-plot_cat_analysis(df = mc, param = "microcystin", col_pallete = my_palette1$primary)+
+  theme(axis.title = element_text(size = 14),
+     axis.text = element_text(size = 12),
+     plot.title = element_text(size = 20, face = "bold"))
 mc_plot
 
-nod<-cat_analysis_function(df = toxins.sf, param = "nodularin")
-nod_plot<-plot_cat_analysis(df = nod, param = "nodularin", col_pallete = my_palette$primary)
+nod<-cat_analysis_function(df = toxins.sf, param = "nodularin") |> 
+   mutate(Category = fct_relevel(Category, "not_sampled", "non-detect", "present"))
+  
+nod_plot<-plot_cat_analysis(df = nod, param = "nodularin", col_pallete = my_palette1$primary)+
+  theme(axis.title = element_text(size = 14),
+     axis.text = element_text(size = 12),
+     plot.title = element_text(size = 20, face = "bold"))
 nod_plot
 
-ana<-cat_analysis_function(df = toxins.sf, param = "anatoxin_a")
+ana<-cat_analysis_function(df = toxins.sf, param = "anatoxin_a")|>
+   mutate(Category = fct_relevel(Category, "not_sampled", "non-detect", "present"))
 
-ana_plot<-plot_cat_analysis(df = ana, param = "anatoxin_a", col_pallete = my_palette$primary)
+ana_plot<-plot_cat_analysis(df = ana, param = "anatoxin", col_pallete = my_palette1$primary)+
+  theme(axis.title = element_text(size = 14),
+     axis.text = element_text(size = 12),
+     plot.title = element_text(size = 20, face = "bold"))
 ana_plot
 
 cyl<-cat_analysis_function(df = toxins.sf, param = "cylindrospermopsin")
-cyl_plot<-plot_cat_analysis(df = cyl, param = "cylindrospermopsin", col_pallete = my_palette$primary)
+cyl_plot<-plot_cat_analysis(df = cyl, param = "cylindrospermopsin", col_pallete = my_palette1$primary)
 cyl_plot
 
 
@@ -597,10 +632,178 @@ layout <- "
 AAABBBCCC
 "
 
-mc_plot + ana_plot+ nod_plot +plot_layout(nrow = 1,ncol = 3,axis_titles = "collect",guides = "collect",axes = "collect",design = layout)
+mc_plot + ana_plot+ nod_plot +plot_layout(nrow = 1,ncol = 3,axis_titles = "collect",guides = "collect",axes = "collect",design = layout)&
+   theme(legend.position = "bottom",
+         axis.text = element_text(size = 14),
+         legend.title = element_text(size = 16, face = "bold"),
+         legend.text = element_text(size = 16))& # Moves the legend to the bottom
+  labs(fill = "Toxin Presence") # changes the main title
+
+
+
+mc_plot + ana_plot+ nod_plot +plot_layout(nrow = 3,ncol = 1,axis_titles = "collect",guides = "collect",axes = "collect")&
+   theme(legend.position = "bottom",
+         axis.text = element_text(size = 14),
+         legend.title = element_text(size = 14, face = "bold"),
+         legend.text = element_text(size = 14))& # Moves the legend to the bottom
+  labs(fill = "Toxin Detection Status") # changes the main title
+
+cat_analysis_function<-function(df,param){
+  df<-df |> 
+    filter(PARAMETER_NAME %in% param)
+  
+  #run the spsurvey data
+standard_ests<-spsurvey::cat_analysis(
+  dframe = df,
+  vars = "present",
+  #subpops = "SAMPLE_METHOD",
+  siteID = "SITE_CODE",
+  weight = "final_weight"
+)
+
+standard_ests<-standard_ests %>% 
+  filter(Category != "Total")
+}
+
+
+
+mc_lr<-cat_analysis_function(df = toxins.sf, param = "microcystin_lr") |>
+   mutate(Category = fct_relevel(Category, "not_sampled", "non-detect", "present"))
+  
+mc_lr_plot<-plot_cat_analysis(df = mc_lr, param = "microcystin_lr", col_pallete = my_palette1$primary)+
+  theme(axis.title = element_text(size = 14),
+     axis.text = element_text(size = 12))
+mc_lr_plot
+
+
+mc_la<-cat_analysis_function(df = toxins.sf, param = "microcystin_la") |>
+   mutate(Category = fct_relevel(Category, "not_sampled", "non-detect", "present"))
+  
+mc_la_plot<-plot_cat_analysis(df = mc_la, param = "microcystin_la", col_pallete = my_palette1$primary)+
+  theme(axis.title = element_text(size = 14),
+     axis.text = element_text(size = 12))
+mc_la_plot
+
+
+mc_lf<-cat_analysis_function(df = toxins.sf, param = "microcystin_lf") |>
+   mutate(Category = fct_relevel(Category, "not_sampled", "non-detect", "present"))
+  
+mc_lf_plot<-plot_cat_analysis(df = mc_lf, param = "microcystin_lf", col_pallete = my_palette1$primary)+
+  theme(axis.title = element_text(size = 14),
+     axis.text = element_text(size = 12))
+mc_lf_plot
+
+
+mc_ly<-cat_analysis_function(df = toxins.sf, param = "microcystin_ly") |>
+   mutate(Category = fct_relevel(Category, "not_sampled", "non-detect", "present"))
+  
+mc_ly_plot<-plot_cat_analysis(df = mc_ly, param = "microcystin_ly", col_pallete = my_palette1$primary)+
+  theme(axis.title = element_text(size = 14),
+     axis.text = element_text(size = 12))
+mc_ly_plot
+
+
+mc_rr<-cat_analysis_function(df = toxins.sf, param = "microcystin_rr") |>
+   mutate(Category = fct_relevel(Category, "not_sampled", "non-detect", "present"))
+  
+mc_rr_plot<-plot_cat_analysis(df = mc_rr, param = "microcystin_rr", col_pallete = my_palette1$primary)+
+  theme(axis.title = element_text(size = 14),
+     axis.text = element_text(size = 12))
+mc_rr_plot
+
+
+mc_yr<-cat_analysis_function(df = toxins.sf, param = "microcystin_yr") |>
+   mutate(Category = fct_relevel(Category, "not_sampled", "non-detect", "present"))
+  
+mc_yr_plot<-plot_cat_analysis(df = mc_yr, param = "microcystin_yr", col_pallete = my_palette1$primary)+
+  theme(axis.title = element_text(size = 14),
+     axis.text = element_text(size = 12))
+mc_yr_plot
+
+
+mc_la_plot + mc_lr_plot+ mc_lf_plot + mc_ly_plot + mc_rr_plot + mc_yr_plot +plot_layout(nrow = 6,ncol = 1,axis_titles = "collect",guides = "collect",axes = "collect")&
+   theme(legend.position = "bottom",
+         legend.title = element_text(size = 12, face = "bold"),
+         legend.text = element_text(size = 12))& # Moves the legend to the bottom
+  labs(fill = "Cyanotoxin Detection Status") # chnages the main title
 
 
 ```
+
+```{r, fluoroprobe}
+
+fluoroprobe_results_bg_chla<-toxins |> 
+  filter(PARAMETER_NAME %in% "chlorophyll-a-concentration_cyanobacteria_bluegreen") |> 
+  mutate(RESULT_VALUE = as.numeric(RESULT_VALUE))
+
+samples_with_detections<-toxins |> 
+  filter(PARAMETER_NAME %in% parameter_list) |>
+  filter(SAMPLE_METHOD != "integrated_disturbance_sample") |> 
+  group_by(SITE_CODE, SAMPLE_METHOD) %>%
+  summarize(
+    any_detect = if_else(any(!is.na(RESULT_VALUE)), "present", "non-detect")
+  ) |> 
+  ungroup() |> 
+  distinct(SITE_CODE, SAMPLE_METHOD, any_detect)
+
+bg_chla_detections<-samples_with_detections |> 
+  left_join(fluoroprobe_results_bg_chla)
+
+# Create the plot
+
+bg_chla_detections_plot<-bg_chla_detections |> 
+  ggplot(aes(x=any_detect, y = RESULT_VALUE, fill = any_detect))+
+  geom_boxplot(alpha=0.5)+
+  scale_y_log10(guide = "axis_logticks")+
+    scale_fill_manual(
+    values = c("non-detect" = "#154973", "present" = "#FACE00"),
+    name = "Toxin Presence"                        
+  ) +
+  geom_jitter(width = 0.2, alpha = 0.4)+
+  theme_light()+
+  ylab("Fluoroprobe blue-green chlorophyll (ug/L)")+
+  theme(
+    legend.position = "bottom",
+    legend.title = element_text(face = "bold", size = 16),
+    legend.text = element_text(size = 16),
+    plot.title = element_text(face = "bold", size = 14),
+    axis.text = element_text(size = 14),
+     axis.title.x = element_blank(),# Remove title
+     axis.title = element_text(size = 14),
+    panel.grid = element_blank(),
+    axis.text.x = element_blank()
+  )
+
+
+bg_chla_detections_plot
+
+
+samples_with_cyanos<-taxa2 |> 
+   mutate(is_cyano = case_when(
+     RESULT_CATEGORY %in% c("anabaena", "microcystis", "planktothrix", "dolichospermum", "oscillatoria", 
+                            "aphanocapsa", "phormidium", "coelosphaerium","aphanazomenon", "lyngbya", "phormidium","synechoccocus","rivularia","fischerella","scytonema","merimoedia","tolypothrix","arthrospira","woronichinia","nostoc","spirulina", "dichothrix", sep = "|") ~ "yes",
+     .default = "no"
+   )) |> 
+  select(SITE_CODE, SAMPLE_NAME, SAMPLE_METHOD, RESULT_CATEGORY, is_cyano)
+
+samples_with_cyanos2<-samples_with_cyanos |> 
+  group_by(SITE_CODE, SAMPLE_METHOD) |> 
+   summarize(
+    cyanos_present = if_else(any(is_cyano == "yes"), "Yes", "No")
+  ) 
+  
+samples_with_cyanos_bg_chla<-samples_with_cyanos2 |> 
+  left_join(bg_chla_detections)
+
+bg_chla_cyanos_plot<-samples_with_cyanos_bg_chla |> 
+  ggplot(aes(x=cyanos_present, y = RESULT_VALUE))+
+  geom_boxplot()+
+  scale_y_log10()
+
+bg_chla_cyanos_plot
+
+```
+
 
 ## Just toxins present overall and then by method (not by toxin species)
 
@@ -612,7 +815,7 @@ lakes_with_any_toxin<-toxins.sf |>
   mutate(level = case_when(present %in% "present"~ 3,
                            present %in% "non-detect"~ 2,
                            TRUE ~ 1)) |> 
-  filter(present != "not_observed") |> #since we dont care about the method
+  filter(present != "not_sampled") |> #since we dont care about the method
   group_by(SITE_CODE) |> 
   filter(level == max(level)) |> 
   distinct()
@@ -638,7 +841,18 @@ lakes_with_any_toxin_method<-toxins.sf |>
   filter(level == max(level)) |> 
   distinct()
 
-lake_plot<-plot_cat_analysis(df = standard_ests_overall, param = "Estimates of Toxin Presence in NYS by Lake (%)", col_pallete = my_palette2$primary)
+lake_plot<-plot_cat_analysis(df = standard_ests_overall, param = "", col_pallete = my_palette2$primary)+theme_light()+ theme(panel.grid = element_blank())+ labs(fill = "Toxin Presence")+ theme(
+    axis.text.y = element_blank(),  # Removes tick labels
+    axis.ticks.y = element_blank(),  # Removes tick marks
+     axis.title.y = element_blank(),# Remove title
+     axis.title = element_text(size = 20),
+     axis.text.x = element_text(size = 18)    
+  )+
+   theme(legend.position = "bottom", # Moves the legend to the bottom
+         legend.title = element_text(size = 20, face = "bold"),
+         legend.text = element_text(size = 20))+ 
+  labs(title = NULL)+ # Removes the main title
+  ylim(0, 90)
 lake_plot
 
 
@@ -693,15 +907,15 @@ toxins_scrape<-spsurvey::cont_analysis(
 
 #plot them - first make some cleaner plotting estimates
 toxins_IDS$CDF<-toxins_IDS$CDF |> 
-  mutate(Estimate.P_clean = round(Estimate.P, digits = 2))
+  mutate(Estimate.P_clean = round(Estimate.P, digits = 1))
 toxins_scrape$CDF<-toxins_scrape$CDF |> 
-  mutate(Estimate.P_clean = round(Estimate.P, digits = 2))
+  mutate(Estimate.P_clean = round(Estimate.P, digits = 1))
 
 
 toxins_IDS$Mean<-toxins_IDS$Mean |> 
-  mutate(Estimate.P_clean = round(Estimate, digits = 2))
+  mutate(Estimate.P_clean = round(Estimate, digits = 1))
 toxins_scrape$Mean<-toxins_scrape$Mean |> 
-  mutate(Estimate.P_clean = round(Estimate, digits = 2))
+  mutate(Estimate.P_clean = round(Estimate, digits = 1))
 
 
 ids<-ggplot(toxins_IDS$CDF, aes(x = Value, y = Estimate.P)) +
@@ -826,15 +1040,26 @@ cat_thresh_c<-cat_thresh_c |>
 
 #plot them
 thresh_m_plot<- plot_cat_analysis(df = cat_thresh_m,
-                                  param = "Microcystin Estimates above 4ug/l",
-                                  col_pallete = my_palette4_thresh$primary)
+                                  param = NULL,
+                                  col_pallete = my_palette4_thresh$primary)&
+   theme(legend.position = "bottom", # Moves the legend to the bottom
+         legend.title = element_text(size = 14, face = "bold"),
+         legend.text = element_text(size = 14),
+          axis.title = element_text(size = 14),
+           axis.text = element_text(size = 14))& 
+        labs(fill = "NYS Recreational Threshold\n Total Microcystins (4 µg/l)") # chnages the main title
 thresh_m_plot
 
 #plot them
 thresh_c_plot<- plot_cat_analysis(df = cat_thresh_c,
                                   param = "cylindrospermopsin",
-                                  col_pallete = my_p1_thresh$primary)
+                                  col_pallete = my_p1_thresh$primary)&
+   theme(legend.position = "bottom",
+         legend.title = element_text(size = 16, face = "bold"),
+         legend.text = element_text(size = 14)) # Moves the legend to the bottom
+
 thresh_c_plot
+
 ```
 
 
@@ -860,7 +1085,7 @@ taxa2<-taxa |>
    filter(PARAMETER_NAME %in% "microscopy_dominant_taxa") 
 
  taxa_sum<-taxa2 |> 
-   select(EVENT_DATETIME, SITE_CODE,PARAMETER_NAME,RESULT_VALUE, RESULT_CATEGORY, SAMPLE_METHOD)
+   select(EVENT_DATETIME, SITE_CODE,PARAMETER_NAME,RESULT_VALUE, RESULT_CATEGORY)
    
 taxa_sum2<-taxa_sum |> 
   group_by(RESULT_CATEGORY) |> 
@@ -883,44 +1108,61 @@ lakes_with_cyanos<-taxa_sum_cat |>
 
 #now let's slice them
 lakes_with_cyanos2<-lakes_with_cyanos |> 
-  group_by(SITE_CODE,SAMPLE_METHOD) |> 
-  select(SITE_CODE,SAMPLE_METHOD,toxigenic_present,tox_sp_num) |> 
+  group_by(SITE_CODE) |> 
+  select(SITE_CODE,toxigenic_present,tox_sp_num) |> 
   filter(tox_sp_num == max(tox_sp_num)) |> 
   distinct()
 
 
 
 taxa.sf<-toxins.sf |> 
-  select(SITE_CODE,SAMPLE_METHOD,geometry,final_weight,present) |> 
+  select(SITE_CODE,geometry,final_weight) |> 
   distinct() |> 
   left_join(lakes_with_cyanos2,
-            by = c("SITE_CODE","SAMPLE_METHOD")) |> 
-  filter(SAMPLE_METHOD %in% c("scrape","floating_mat")) |> 
-  distinct() |> 
-  mutate(toxin_present = present,
-         toxigenic_present = case_when(is.na(toxigenic_present) ~ "not_sampled",
-                                       TRUE~ toxigenic_present))
+            by = c("SITE_CODE")) |> 
+  # filter(SAMPLE_METHOD %in% c("scrape","floating_mat")) |> 
+  distinct() 
 
 
   #run the spsurvey data
 tox_sp<-spsurvey::cat_analysis(
   dframe = taxa.sf,
   vars = "toxigenic_present",
-  subpops = "SAMPLE_METHOD",
+  #subpops = "SAMPLE_METHOD",
   siteID = "SITE_CODE",
   weight = "final_weight"
 )
 
 
 tox_sp<-tox_sp |> 
-  filter(Category != "Total")
-tox_sp_plot<-plot_cat_analysis(df = tox_sp, param = "microscopy_dominant_taxa",col_pallete = my_palette$primary)
+  filter(Category != "Total") |> 
+  mutate(Category = case_when(
+    Category %in% "toxigenic_absent" ~ "absent",
+    .default = "present"
+    
+  ))
 
-tox_sp_plot + ggtitle ("Toxigenic Cyanobacteria observations")+xlab("Sample Method")
+
+tox_sp_plot<-plot_cat_analysis(df = tox_sp, param = "microscopy_dominant_taxa",col_pallete = my_palette2$primary)+
+  theme_light()+ theme(panel.grid = element_blank())+ labs(fill = "Cyanobacteria Presence")+ theme(
+    axis.text.y = element_blank(),  # Removes tick labels
+    axis.ticks.y = element_blank(),  # Removes tick marks
+     axis.title.y = element_blank(),# Remove title
+     axis.title = element_text(size = 20),
+     axis.text.x = element_text(size = 18)    
+  )+
+   theme(legend.position = "bottom",
+         legend.title = element_text(size = 20, face = "bold"),
+         legend.text = element_text(size = 20))+ # Moves the legend to the bottom
+  labs(title = NULL)+ # Removes the main title
+  ylim(0, 90)
+tox_sp_plot
+
+  
 
 taxa_sum<-taxa_sum_cat|> 
   mutate(total = 1) |> 
-  group_by(SAMPLE_METHOD,RESULT_CATEGORY,is_cyano) |> 
+  group_by(RESULT_CATEGORY,is_cyano) |> 
   summarise(n = n())
 ```
 
@@ -963,6 +1205,9 @@ target_crs <- st_crs("EPSG:26918")
 # Transform the polygon layer to the target CRS
 site_locations_points <- st_transform(site_locations_points, target_crs)
 
+site_locations_points <- site_locations_points |>
+  mutate(any_detect = factor(any_detect, levels = c("Yes", "No"))) |> 
+  mutate(cyano_present = factor(cyano_present, levels = c("Yes", "No")))
 
 ggplot() +
   # Layer 1: Plot the NYS background map
@@ -974,12 +1219,14 @@ ggplot() +
   
   # Layer 3: Customize the categorical colors manually
   scale_color_manual(
-    values = c("No" = "#154973", "Yes" = "#FACE00"), # Custom Hex codes for your values
+    values = c("Yes" = "#FACE00", "No" = "#154973"), # Custom Hex codes for your values
+    breaks = c("Yes", "No"),
     name = "Toxins Detected"                         # Title for your map legend
   ) +
  scale_shape_manual(
     name = "Cyanos Present",
-    values = c("Yes" = 16, "No" = 17) # 16 = Filled Circle, 17 = Filled Triangle
+    values = c("Yes" = 16, "No" = 17), # 16 = Filled Circle, 17 = Filled Triangle
+    breaks = c("Yes", "No"),
   ) +
   
   # Layer 4: Formatting and clean presentation layout
@@ -1010,10 +1257,11 @@ ggplot() +
   )+theme(legend.position = c(0.3, 0.20), legend.box = "horizontal", legend.key = element_rect(fill = "transparent", color = NA)) # Places legend at x=0.85, y=0.20 inside the panel
 
 
-ggsave("my_plot.png")
+ggsave("benthic_HAB_map.png")
 
 
 ```
+
 
 ## Extent - Impacted Categories
 
@@ -1275,7 +1523,6 @@ plot_extent_impaired<-ggplot2::ggplot(standard_ests_spl_all_short, aes(x=Indicat
   theme_minimal()
 plot_extent_impaired
 
-
 ```
 
 ## RElative Risk
@@ -1374,7 +1621,7 @@ risk_all<-risk_all |>
                                                   "secchi_cat",
                                                   "canopy_cat"))) |> 
     group_by(Stressor) |> 
-  mutate(Estimate_clean = round(Estimate, digits = 2))
+  mutate(Estimate_clean = round(Estimate, digits = 1))
 
 risk_all$Stressor<-dplyr::recode(risk_all$Stressor,
                                                 "phos_cat" = "Total Phosphate",
@@ -1517,7 +1764,7 @@ water_chem <- open_dataset(obt_result_dir) |>
          #Removing incorrectly classified sample
          SAMPLE_NAME != "25L0116",
          SAMPLE_LOCATION %in% c("open_water","secchi_depth"),
-         PARAMETER_NAME %in% c("ammonia", "phosphorus", "chlorophyll-a", 
+         PARAMETER_NAME %in% c("ammonia", "phosphorus", "chlorophyll-a", "alkalinity", 
                                "kjeldahl_nitrogen", "secchi_disk_depth", 
                                "nitrate_nitrite"),
          between(EVENT_DATETIME, # 2.2
@@ -1727,7 +1974,7 @@ ggplot(drivers_scrapes, aes(x = any_detect, y = RESULT_VALUE, fill = any_detect)
   geom_jitter(width = 0.2, alpha = 0.4) +
  
   # Clean facet headers
-  facet_wrap(~ facet_label, scales = "free_y", ncol = 3) +
+  facet_wrap(~ facet_label, scales = "free_y", ncol = 4) +
   
   ggh4x::facetted_pos_scales(
     y = list(
@@ -1756,6 +2003,7 @@ ggplot(drivers_scrapes, aes(x = any_detect, y = RESULT_VALUE, fill = any_detect)
   ) +
   theme_bw() +
   theme(
+    axis.title.x = element_blank(),# Remove title
     legend.position = "bottom",
     
     # FIX: Increase the font size and styling of the legend text
@@ -1775,14 +2023,24 @@ ggplot(drivers_scrapes, aes(x = any_detect, y = RESULT_VALUE, fill = any_detect)
 
 ```
 
-
+### Drivers Principal Component Analysis
 
 ```{r, PCA}
 
 df_wide <- drivers %>%
   select(SITE_CODE, any_detect, cyano_present, PARAMETER_NAME, RESULT_VALUE) %>% 
   pivot_wider(names_from = PARAMETER_NAME, values_from = RESULT_VALUE) %>%
-  drop_na() # Removes missing values since PCA requires a complete matrix
+  drop_na() |>  # Removes missing values since PCA requires a complete matrix
+  rename(
+  # "TKN" = "kjeldahl_nitrogen",
+  # "chl-a" = "chlorophyll-a",
+  # "TP" = "total_phosphorus",
+  # "DP" = "dissolved_phosphorus",
+  "canopy_cover" = "canopy_densiometer_percent",
+  "shoreline_disturbance" = "rdis_ix",
+  "littoral_habitat_index" = "litcvrqc3oe",
+  "riparian_habitat_index" = "rvegqc3oe"
+  )
 
 pca_meta <- df_wide %>% select(SITE_CODE, any_detect, cyano_present)
 pca_data <- df_wide %>% select(-SITE_CODE, -any_detect, -cyano_present)
@@ -1820,11 +2078,14 @@ ggplot() +
     aes(x = PC1, y = PC2, color = any_detect, fill = any_detect, shape = cyano_present),
     size = 3, alpha = 0.6, stroke = 1
   ) +
-  scale_color_manual(values = c("No" = "#154973", "Yes" = "#FACE00"), name = "Toxins Detected") +
-  scale_fill_manual(values = c("No" = "#154973", "Yes" = "#FACE00"), name = "Toxins Detected") +
+  scale_color_manual(values = c("No" = "#154973", "Yes" = "#FACE00"), name = "Toxins Detected",
+                     breaks = c("Yes", "No")) +
+  scale_fill_manual(values = c("No" = "#154973", "Yes" = "#FACE00"), name = "Toxins Detected",
+                    breaks = c("Yes", "No")) +
  scale_shape_manual(
     name = "Cyanos Present",
-    values = c("Yes" = 16, "No" = 17) # 16 = Filled Circle, 17 = Filled Triangle
+    values = c("Yes" = 16, "No" = 17), # 16 = Filled Circle, 17 = Filled Triangle
+    breaks = c("Yes", "No")
   ) +
   # Layer B: The Loading Arrows
   geom_segment(
@@ -1836,10 +2097,10 @@ ggplot() +
   
   # Layer C: The Parameter Labels
   # vjust/hjust adjustments prevent text from drawing directly on top of the arrow head
-  geom_text(
+  geom_text_repel(
     data = df_loadings,
-    aes(x = x_end * 1.1, y = y_end * 1.1, label = parameter),
-    color = "black", fontface = "bold", size = 2.5, check_overlap = TRUE
+    aes(x = x_end, y = y_end, label = parameter),
+    color = "black", fontface = "bold", size = 4, check_overlap = TRUE
   ) +
   
   labs(
@@ -1848,14 +2109,17 @@ ggplot() +
     x = paste0("PC1 (", var_explained[1], "% Variance Explained)"),
     y = paste0("PC2 (", var_explained[2], "% Variance Explained)")
   ) +
-  theme_bw() +
+  theme_light() +
   theme(
     legend.position = "bottom",
-    legend.title = element_text(face = "bold", size = 12),
-    legend.text = element_text(size = 11),
-    plot.title = element_text(face = "bold", size = 14)
+    legend.title = element_text(face = "bold", size = 14),
+    legend.text = element_text(size = 14),
+    plot.title = element_text(face = "bold", size = 14),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
   )+
-  scale_x_continuous(expand = expansion(mult = c(0.2, 0.2)))
+  scale_x_continuous(expand = expansion(mult = c(0.2, 0.2)))+
+  xlim(-5,9.5)
 
 
 ```
@@ -1889,6 +2153,85 @@ df_results <- df_wide_complete %>%
   ))
 
 
+
+```
+```{r, comparing toxin detections across sample types}
+toxins_sample_compare <- toxins2 %>%
+  filter(PARAMETER_NAME %in% parameter_list) |>
+  filter(SAMPLE_METHOD != "floating_mat") |> 
+  group_by(SITE_CODE, PARAMETER_NAME, SAMPLE_METHOD) %>%
+  summarize(
+    any_detect = if_else(any(!is.na(RESULT_VALUE)), "Yes", "No")
+  ) |> 
+  ungroup() |> 
+  pivot_wider(names_from = SAMPLE_METHOD, values_from = any_detect) |> 
+  mutate(comparison = case_when(
+    scrape %in% "Yes" & integrated_disturbance_sample %in% "No" ~ "scrape_not_ids",
+    scrape %in% "Yes" & integrated_disturbance_sample %in% "Yes" ~ "scrape_and_ids",
+    scrape %in% "No" & integrated_disturbance_sample %in% "Yes" ~ "ids_not_scrape",
+    scrape %in% "No" & integrated_disturbance_sample %in% "No" ~ "none",
+    .default = NA_character_
+  ))
+compare_summary<-toxins_sample_compare |> 
+  group_by(PARAMETER_NAME) |> 
+  count(comparison)
+
+toxins2<-toxins2 |> 
+  mutate(RESULT_VALUE = as.numeric(RESULT_VALUE))
+
+toxins_samples_microcystin_scrapes<-toxins2 |> 
+  filter(PARAMETER_NAME %in% "microcystin", SAMPLE_METHOD %in% "scrape") |> 
+  select(SITE_CODE, SAMPLE_METHOD, PARAMETER_NAME, RESULT_VALUE) |> 
+  rename(RESULT_VALUE_SCRAPE = RESULT_VALUE) |> 
+  select(-SAMPLE_METHOD)
+
+toxins_samples_microcystin_IDS<-toxins2 |> 
+  filter(PARAMETER_NAME %in% "microcystin", SAMPLE_METHOD %in% "integrated_disturbance_sample") |> 
+  select(SITE_CODE, SAMPLE_METHOD, PARAMETER_NAME, RESULT_VALUE) |> 
+  rename(RESULT_VALUE_IDS = RESULT_VALUE) |> 
+    select(-SAMPLE_METHOD)
+
+microcystin_compare<-toxins_samples_microcystin_scrapes |> 
+  left_join(toxins_samples_microcystin_IDS) |> 
+  mutate(across(everything(), ~ replace_na(.x, 0))) |> 
+  mutate(difference = RESULT_VALUE_SCRAPE - RESULT_VALUE_IDS)
+
+toxins_samples_nodularin_scrapes<-toxins2 |> 
+  filter(PARAMETER_NAME %in% "nodularin", SAMPLE_METHOD %in% "scrape") |> 
+  select(SITE_CODE, SAMPLE_METHOD, PARAMETER_NAME, RESULT_VALUE) |> 
+  rename(RESULT_VALUE_SCRAPE = RESULT_VALUE) |> 
+  select(-SAMPLE_METHOD)
+
+toxins_samples_nodularin_IDS<-toxins2 |> 
+  filter(PARAMETER_NAME %in% "nodularin", SAMPLE_METHOD %in% "integrated_disturbance_sample") |> 
+  select(SITE_CODE, SAMPLE_METHOD, PARAMETER_NAME, RESULT_VALUE) |> 
+  rename(RESULT_VALUE_IDS = RESULT_VALUE) |> 
+    select(-SAMPLE_METHOD)
+
+nodularin_compare<-toxins_samples_nodularin_scrapes |> 
+  left_join(toxins_samples_nodularin_IDS) |> 
+  mutate(across(everything(), ~ replace_na(.x, 0))) |> 
+  mutate(difference = RESULT_VALUE_SCRAPE - RESULT_VALUE_IDS)
+
+
+toxins_samples_anatoxin_a_scrapes<-toxins2 |> 
+  filter(PARAMETER_NAME %in% "anatoxin_a", SAMPLE_METHOD %in% "scrape") |> 
+  select(SITE_CODE, SAMPLE_METHOD, PARAMETER_NAME, RESULT_VALUE) |> 
+  rename(RESULT_VALUE_SCRAPE = RESULT_VALUE) |> 
+  select(-SAMPLE_METHOD) |> 
+  distinct()
+
+toxins_samples_anatoxin_a_IDS<-toxins2 |> 
+  filter(PARAMETER_NAME %in% "anatoxin_a", SAMPLE_METHOD %in% "integrated_disturbance_sample") |> 
+  select(SITE_CODE, SAMPLE_METHOD, PARAMETER_NAME, RESULT_VALUE) |> 
+  rename(RESULT_VALUE_IDS = RESULT_VALUE) |> 
+    select(-SAMPLE_METHOD) |> 
+  distinct()
+
+anatoxin_a_compare<-toxins_samples_anatoxin_a_scrapes |> 
+  left_join(toxins_samples_anatoxin_a_IDS) |> 
+  mutate(across(everything(), ~ replace_na(.x, 0))) |> 
+  mutate(difference = RESULT_VALUE_SCRAPE - RESULT_VALUE_IDS)
 
 ```
 
